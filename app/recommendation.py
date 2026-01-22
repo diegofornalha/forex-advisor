@@ -69,8 +69,21 @@ def calculate_indicators(df: pd.DataFrame) -> TechnicalIndicators:
     delta = close.diff()
     gain = delta.where(delta > 0, 0).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rs = gain / loss
-    rsi = float(100 - (100 / (1 + rs)).iloc[-1])
+    rs = gain / loss.replace(0, np.nan)
+    rsi_series = 100 - (100 / (1 + rs))
+    rsi_last = float(rsi_series.iloc[-1])
+    if not np.isfinite(rsi_last):
+        gain_last = float(gain.iloc[-1])
+        loss_last = float(loss.iloc[-1])
+        if not np.isfinite(gain_last) or not np.isfinite(loss_last):
+            rsi_last = 50.0
+        elif loss_last == 0 and gain_last == 0:
+            rsi_last = 50.0
+        elif loss_last == 0:
+            rsi_last = 100.0
+        else:
+            rsi_last = 50.0
+    rsi = rsi_last
 
     # Bollinger Bands (SMA20 ± 2 standard deviations)
     bb_middle = sma20
@@ -117,7 +130,10 @@ def classify(indicators: TechnicalIndicators) -> ClassificationResult:
 
     # Feature 3: Position in Bollinger Bands (0 to 1, can exceed)
     bb_range = indicators.bollinger_upper - indicators.bollinger_lower
-    bb_position = (indicators.current_price - indicators.bollinger_lower) / bb_range
+    if bb_range == 0:
+        bb_position = 0.5
+    else:
+        bb_position = (indicators.current_price - indicators.bollinger_lower) / bb_range
     features["bb_position"] = round(bb_position, 4)
 
     # Rule-based decision (transparent and auditable)

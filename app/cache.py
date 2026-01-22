@@ -60,7 +60,8 @@ async def get_cached(key: str) -> dict | None:
             value = await client.get(key)
             if value:
                 logger.debug(f"Cache HIT (Redis): {key}")
-                return json.loads(value)
+                cached = json.loads(value)
+                return {k: v for k, v in cached.items() if k != "_cached_at"}
     except Exception as e:
         logger.warning(f"Error reading from Redis: {e}")
 
@@ -69,7 +70,7 @@ async def get_cached(key: str) -> dict | None:
         value, expires_at = _memory_cache[key]
         if time.time() < expires_at:
             logger.debug(f"Cache HIT (memory): {key}")
-            return value
+            return {k: v for k, v in value.items() if k != "_cached_at"}
         else:
             # Expired
             del _memory_cache[key]
@@ -96,11 +97,12 @@ async def set_cached(
     """
     ttl = ttl or settings.cache_ttl_insight
 
-    # Add cache timestamp
-    value["_cached_at"] = datetime.utcnow().isoformat()
+    # Add cache timestamp without mutating caller's dict
+    cache_value = dict(value)
+    cache_value["_cached_at"] = datetime.utcnow().isoformat()
 
     # Serialize to JSON
-    json_value = json.dumps(value, default=str)
+    json_value = json.dumps(cache_value, default=str)
 
     # Save to Redis
     try:
@@ -112,7 +114,7 @@ async def set_cached(
         logger.warning(f"Error saving to Redis: {e}")
 
     # Always save to memory as well (backup)
-    _memory_cache[key] = (value, time.time() + ttl)
+    _memory_cache[key] = (cache_value, time.time() + ttl)
     logger.debug(f"Cache SET (memory): {key} TTL={ttl}s")
 
     return True
