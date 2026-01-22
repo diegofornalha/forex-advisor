@@ -1,0 +1,24 @@
+version: '3.8'
+
+# Development configuration with hot reload
+services:
+  api:
+    build: .
+    container_name: forex-advisor-api-dev
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - DEBUG=true
+    volumes:
+      - ./app:/app/app  # Hot reload
+    depends_on:
+      - redis
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  redis:
+    image: redis:7-alpine
+    container_name: forex-advisor-redis-dev
+    ports:
+      - "6379:6379"
