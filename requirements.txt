@@ -1,0 +1,33 @@
+# API Framework
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# Cache
+redis>=5.0.0
+
+# Dados de mercado
+yfinance>=0.2.18
+pandas>=2.0.0
+numpy>=1.24.0
+
+# LLM
+anthropic>=0.18.0
+
+# RAG e Embeddings
+fastembed>=0.2.0
+sqlite-vec>=0.1.1
+apsw>=3.44.0
+
+# News scraping
+feedparser>=6.0.0
+requests>=2.31.0
+
+# Utils
+python-dotenv>=1.0.0
+
+# Dev/Test
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+httpx>=0.25.0
