@@ -1,4 +1,4 @@
-"""Motor de recomendação com análise técnica e explicabilidade."""
+"""Recommendation engine with technical analysis and explainability."""
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
@@ -10,7 +10,7 @@ import yfinance as yf
 from .config import settings
 from .models import ClassificationResult, MarketClassification, TechnicalIndicators
 
-# Thread pool para operações bloqueantes do yfinance
+# Thread pool for blocking yfinance operations
 _executor = ThreadPoolExecutor(max_workers=2)
 
 
@@ -18,14 +18,14 @@ async def fetch_ohlc(
     symbol: str = None,
     period: str = None,
 ) -> pd.DataFrame:
-    """Busca dados OHLC via yfinance.
+    """Fetch OHLC data via yfinance.
 
     Args:
-        symbol: Símbolo do ativo (default: settings.symbol)
-        period: Período de dados (default: settings.period)
+        symbol: Asset symbol (default: settings.symbol)
+        period: Data period (default: settings.period)
 
     Returns:
-        DataFrame com colunas Open, High, Low, Close, Volume
+        DataFrame with Open, High, Low, Close, Volume columns
     """
     symbol = symbol or settings.symbol
     period = period or settings.period
@@ -37,42 +37,42 @@ async def fetch_ohlc(
     )
 
     if df.empty:
-        raise ValueError(f"Não foi possível obter dados para {symbol}")
+        raise ValueError(f"Could not fetch data for {symbol}")
 
     return df
 
 
 def calculate_indicators(df: pd.DataFrame) -> TechnicalIndicators:
-    """Calcula indicadores técnicos a partir dos dados OHLC.
+    """Calculate technical indicators from OHLC data.
 
-    Indicadores calculados:
-    - SMA 20 e 50 períodos
-    - RSI 14 períodos
-    - Bandas de Bollinger (SMA20 ± 2σ)
+    Indicators:
+    - SMA 20 and 50 periods
+    - RSI 14 periods
+    - Bollinger Bands (SMA20 ± 2σ)
 
     Args:
-        df: DataFrame com dados OHLC
+        df: DataFrame with OHLC data
 
     Returns:
-        TechnicalIndicators com todos os valores calculados
+        TechnicalIndicators with all calculated values
     """
     close = df["Close"].squeeze()
 
-    # Preço atual (último fechamento)
+    # Current price (last close)
     current_price = float(close.iloc[-1])
 
-    # SMA - Médias Móveis Simples
+    # SMA - Simple Moving Averages
     sma20 = float(close.rolling(window=20).mean().iloc[-1])
     sma50 = float(close.rolling(window=50).mean().iloc[-1])
 
-    # RSI - Relative Strength Index (14 períodos)
+    # RSI - Relative Strength Index (14 periods)
     delta = close.diff()
     gain = delta.where(delta > 0, 0).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / loss
     rsi = float(100 - (100 / (1 + rs)).iloc[-1])
 
-    # Bandas de Bollinger (SMA20 ± 2 desvios padrão)
+    # Bollinger Bands (SMA20 ± 2 standard deviations)
     bb_middle = sma20
     bb_std = float(close.rolling(window=20).std().iloc[-1])
     bb_upper = bb_middle + (2 * bb_std)
@@ -90,37 +90,37 @@ def calculate_indicators(df: pd.DataFrame) -> TechnicalIndicators:
 
 
 def classify(indicators: TechnicalIndicators) -> ClassificationResult:
-    """Classifica o mercado com base nos indicadores técnicos.
+    """Classify market based on technical indicators.
 
-    Lógica de classificação (explicável):
-    - Alta Volatilidade: preço fora das Bandas de Bollinger
-    - Tendência de Alta: preço > SMA50 + 2% e RSI entre 50-70
-    - Tendência de Baixa: preço < SMA50 - 2% e RSI entre 30-50
-    - Neutro: demais casos
+    Classification logic (explainable):
+    - High Volatility: price outside Bollinger Bands
+    - Bullish: price > SMA50 + 2% and RSI between 50-70
+    - Bearish: price < SMA50 - 2% and RSI between 30-50
+    - Neutral: all other cases
 
     Args:
-        indicators: Indicadores técnicos calculados
+        indicators: Calculated technical indicators
 
     Returns:
-        ClassificationResult com classificação e explicabilidade
+        ClassificationResult with classification and explainability
     """
-    # Calcula features normalizadas
+    # Calculate normalized features
     features = {}
 
-    # Feature 1: Posição relativa à SMA50 (%)
+    # Feature 1: Position relative to SMA50 (%)
     price_vs_sma50 = (indicators.current_price - indicators.sma50) / indicators.sma50
     features["price_vs_sma50"] = round(price_vs_sma50, 4)
 
-    # Feature 2: RSI normalizado (-1 a 1)
+    # Feature 2: RSI normalized (-1 to 1)
     rsi_normalized = (indicators.rsi - 50) / 50
     features["rsi_signal"] = round(rsi_normalized, 4)
 
-    # Feature 3: Posição nas Bandas de Bollinger (0 a 1, pode sair)
+    # Feature 3: Position in Bollinger Bands (0 to 1, can exceed)
     bb_range = indicators.bollinger_upper - indicators.bollinger_lower
     bb_position = (indicators.current_price - indicators.bollinger_lower) / bb_range
     features["bb_position"] = round(bb_position, 4)
 
-    # Decisão baseada em regras (transparente e auditável)
+    # Rule-based decision (transparent and auditable)
     if bb_position > 1.0 or bb_position < 0.0:
         classification = MarketClassification.HIGH_VOLATILITY
         explanation = (
@@ -154,7 +154,7 @@ def classify(indicators: TechnicalIndicators) -> ClassificationResult:
         )
         confidence = 0.5
 
-    # Feature importance (peso de cada feature na decisão)
+    # Feature importance (weight of each feature in decision)
     features_importance = {
         "price_vs_sma50": 0.40,
         "rsi_signal": 0.35,
@@ -174,14 +174,14 @@ async def get_classification(
     symbol: str = None,
     period: str = None,
 ) -> ClassificationResult:
-    """Pipeline completo: busca dados, calcula indicadores e classifica.
+    """Full pipeline: fetch data, calculate indicators and classify.
 
     Args:
-        symbol: Símbolo do ativo
-        period: Período de dados
+        symbol: Asset symbol
+        period: Data period
 
     Returns:
-        ClassificationResult com toda a análise
+        ClassificationResult with full analysis
     """
     df = await fetch_ohlc(symbol, period)
     indicators = calculate_indicators(df)

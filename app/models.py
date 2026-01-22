@@ -1,4 +1,4 @@
-"""Modelos de dados e tipos para a API."""
+"""Data models and types for the API."""
 
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 
 class MarketClassification(str, Enum):
-    """Classificação do mercado baseada em análise técnica."""
+    """Market classification based on technical analysis."""
 
     BULLISH = "Tendência de Alta"
     BEARISH = "Tendência de Baixa"
@@ -18,7 +18,7 @@ class MarketClassification(str, Enum):
 
 @dataclass
 class TechnicalIndicators:
-    """Indicadores técnicos calculados."""
+    """Calculated technical indicators."""
 
     current_price: float
     sma20: float
@@ -31,7 +31,7 @@ class TechnicalIndicators:
 
 @dataclass
 class ClassificationResult:
-    """Resultado da classificação com explicabilidade."""
+    """Classification result with explainability."""
 
     classification: MarketClassification
     confidence: float
@@ -42,7 +42,7 @@ class ClassificationResult:
 
 @dataclass
 class NewsItem:
-    """Item de notícia para contexto."""
+    """News item for context enrichment."""
 
     title: str
     description: str
@@ -53,7 +53,7 @@ class NewsItem:
 
 @dataclass
 class InsightResult:
-    """Resultado da geração de insight."""
+    """Generated insight result."""
 
     text: str
     classification: MarketClassification
@@ -61,11 +61,11 @@ class InsightResult:
     generated_at: datetime
 
 
-# Pydantic models para API responses
+# Pydantic models for API responses
 
 
 class IndicatorsResponse(BaseModel):
-    """Response model para indicadores técnicos."""
+    """Response model for technical indicators."""
 
     current_price: float = Field(..., description="Preço atual do ativo")
     sma20: float = Field(..., description="Média móvel simples de 20 períodos")
@@ -76,7 +76,7 @@ class IndicatorsResponse(BaseModel):
 
 
 class InsightResponse(BaseModel):
-    """Response model completo para endpoint principal."""
+    """Full response model for main endpoint."""
 
     symbol: str = Field(..., description="Par de moedas")
     classification: str = Field(..., description="Classificação do mercado")
@@ -93,7 +93,7 @@ class InsightResponse(BaseModel):
 
 
 class TechnicalResponse(BaseModel):
-    """Response model para endpoint de análise técnica apenas."""
+    """Response model for technical-only endpoint."""
 
     symbol: str = Field(..., description="Par de moedas")
     classification: str = Field(..., description="Classificação do mercado")
@@ -106,7 +106,7 @@ class TechnicalResponse(BaseModel):
 
 
 class HealthResponse(BaseModel):
-    """Response model para health check."""
+    """Response model for health check."""
 
     status: str = Field(..., description="Status do serviço")
     version: str = Field(..., description="Versão da API")

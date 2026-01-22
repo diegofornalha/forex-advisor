@@ -1,4 +1,4 @@
-"""Camada de cache com Redis e fallback em memória."""
+"""Cache layer with Redis and memory fallback."""
 
 import json
 import logging
@@ -12,18 +12,18 @@ from .config import settings
 
 logger = logging.getLogger(__name__)
 
-# Cliente Redis global (singleton)
+# Global Redis client (singleton)
 _redis_client: redis.Redis | None = None
 
-# Cache em memória como fallback
+# In-memory cache as fallback
 _memory_cache: dict[str, tuple[dict, float]] = {}
 
 
 async def get_redis() -> redis.Redis | None:
-    """Retorna cliente Redis (singleton).
+    """Return Redis client (singleton pattern).
 
     Returns:
-        Cliente Redis ou None se não conseguir conectar
+        Redis client or None if connection fails
     """
     global _redis_client
 
@@ -34,26 +34,26 @@ async def get_redis() -> redis.Redis | None:
                 encoding="utf-8",
                 decode_responses=True,
             )
-            # Testa conexão
+            # Test connection
             await _redis_client.ping()
-            logger.info("Conectado ao Redis")
+            logger.info("Connected to Redis")
         except Exception as e:
-            logger.warning(f"Redis não disponível: {e}. Usando cache em memória.")
+            logger.warning(f"Redis not available: {e}. Using memory cache.")
             _redis_client = None
 
     return _redis_client
 
 
 async def get_cached(key: str) -> dict | None:
-    """Busca valor do cache (Redis ou memória).
+    """Get value from cache (Redis or memory).
 
     Args:
-        key: Chave do cache
+        key: Cache key
 
     Returns:
-        Valor deserializado ou None se não encontrado
+        Deserialized value or None if not found
     """
-    # Tenta Redis primeiro
+    # Try Redis first
     try:
         client = await get_redis()
         if client:
@@ -62,18 +62,18 @@ async def get_cached(key: str) -> dict | None:
                 logger.debug(f"Cache HIT (Redis): {key}")
                 return json.loads(value)
     except Exception as e:
-        logger.warning(f"Erro ao ler Redis: {e}")
+        logger.warning(f"Error reading from Redis: {e}")
 
-    # Fallback: memória
+    # Fallback: memory
     if key in _memory_cache:
         value, expires_at = _memory_cache[key]
         if time.time() < expires_at:
-            logger.debug(f"Cache HIT (memória): {key}")
+            logger.debug(f"Cache HIT (memory): {key}")
             return value
         else:
-            # Expirou
+            # Expired
             del _memory_cache[key]
-            logger.debug(f"Cache expirado (memória): {key}")
+            logger.debug(f"Cache expired (memory): {key}")
 
     logger.debug(f"Cache MISS: {key}")
     return None
@@ -84,58 +84,58 @@ async def set_cached(
     value: dict,
     ttl: int | None = None,
 ) -> bool:
-    """Salva valor no cache (Redis e memória).
+    """Save value to cache (Redis and memory).
 
     Args:
-        key: Chave do cache
-        value: Valor para cachear (dict)
-        ttl: Tempo de vida em segundos (default: settings.cache_ttl_insight)
+        key: Cache key
+        value: Value to cache (dict)
+        ttl: Time to live in seconds (default: settings.cache_ttl_insight)
 
     Returns:
-        True se salvou com sucesso
+        True if saved successfully
     """
     ttl = ttl or settings.cache_ttl_insight
 
-    # Adiciona timestamp de cache
+    # Add cache timestamp
     value["_cached_at"] = datetime.utcnow().isoformat()
 
-    # Serializa para JSON
+    # Serialize to JSON
     json_value = json.dumps(value, default=str)
 
-    # Salva no Redis
+    # Save to Redis
     try:
         client = await get_redis()
         if client:
             await client.setex(key, ttl, json_value)
             logger.debug(f"Cache SET (Redis): {key} TTL={ttl}s")
     except Exception as e:
-        logger.warning(f"Erro ao salvar no Redis: {e}")
+        logger.warning(f"Error saving to Redis: {e}")
 
-    # Sempre salva na memória também (backup)
+    # Always save to memory as well (backup)
     _memory_cache[key] = (value, time.time() + ttl)
-    logger.debug(f"Cache SET (memória): {key} TTL={ttl}s")
+    logger.debug(f"Cache SET (memory): {key} TTL={ttl}s")
 
     return True
 
 
 async def delete_cached(key: str) -> bool:
-    """Remove valor do cache.
+    """Remove value from cache.
 
     Args:
-        key: Chave a remover
+        key: Key to remove
 
     Returns:
-        True se removeu
+        True if removed
     """
-    # Remove do Redis
+    # Remove from Redis
     try:
         client = await get_redis()
         if client:
             await client.delete(key)
     except Exception as e:
-        logger.warning(f"Erro ao deletar do Redis: {e}")
+        logger.warning(f"Error deleting from Redis: {e}")
 
-    # Remove da memória
+    # Remove from memory
     if key in _memory_cache:
         del _memory_cache[key]
 
@@ -143,14 +143,14 @@ async def delete_cached(key: str) -> bool:
 
 
 async def clear_forex_cache() -> int:
-    """Limpa todas as chaves forex:* do cache.
+    """Clear all forex:* keys from cache.
 
     Returns:
-        Número de chaves removidas
+        Number of keys removed
     """
     count = 0
 
-    # Limpa do Redis
+    # Clear from Redis
     try:
         client = await get_redis()
         if client:
@@ -158,9 +158,9 @@ async def clear_forex_cache() -> int:
             if keys:
                 count = await client.delete(*keys)
     except Exception as e:
-        logger.warning(f"Erro ao limpar Redis: {e}")
+        logger.warning(f"Error clearing Redis: {e}")
 
-    # Limpa da memória
+    # Clear from memory
     memory_keys = [k for k in _memory_cache if k.startswith("forex:")]
     for k in memory_keys:
         del _memory_cache[k]
@@ -170,10 +170,10 @@ async def clear_forex_cache() -> int:
 
 
 async def get_cache_status() -> dict[str, Any]:
-    """Retorna status do cache para health check.
+    """Return cache status for health check.
 
     Returns:
-        Dict com informações de status
+        Dict with status information
     """
     redis_status = "disconnected"
     redis_keys = 0
