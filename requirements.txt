@@ -13,7 +13,12 @@ pandas>=2.0.0
 numpy>=1.24.0
 
 # LLM
-anthropic>=0.18.0
+litellm>=1.30.0
+anthropic>=0.18.0  # fallback direto e Minimax (API compatible)
+google-cloud-aiplatform>=1.38.0  # Vertex AI
+
+# E2B Sandbox (execução isolada de código de análise)
+e2b-code-interpreter>=1.0.0
 
 # RAG e Embeddings
 fastembed>=0.2.0

@@ -8,10 +8,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .cache import get_cache_status, get_cached, set_cached
+from .chat import router as chat_router
 from .config import settings
 from .insights import generate_insight
+from .llm_router import get_router_stats
 from .models import HealthResponse, InsightResponse, TechnicalResponse
 from .recommendation import get_classification
+from .sandbox import close_sandbox, get_sandbox_status
 
 # Configure logging
 logging.basicConfig(
@@ -31,6 +34,7 @@ async def lifespan(app: FastAPI):
     yield
     # Shutdown
     logger.info("👋 Encerrando Forex Advisor API...")
+    close_sandbox()  # Cleanup E2B sandbox
 
 
 app = FastAPI(
@@ -54,14 +58,19 @@ app.add_middleware(
         "http://localhost:5173",
         "http://localhost:3000",
         "http://localhost:8080",
+        "http://localhost:8081",
         "http://127.0.0.1:5173",
         "http://127.0.0.1:8080",
+        "http://127.0.0.1:8081",
     ],
     allow_credentials=True,
-    allow_methods=["GET", "OPTIONS"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
     expose_headers=["X-Cache"],
 )
+
+# Include chat router
+app.include_router(chat_router)
 
 
 @app.get(
@@ -209,26 +218,47 @@ async def get_technical_only(
 
 @app.get(
     "/health",
-    response_model=HealthResponse,
     summary="Health check",
     description=(
         "Verifica o status do serviço e suas dependências.\n\n"
         "Retorna:\n"
         "- **status**: Estado geral do serviço\n"
         "- **version**: Versão da API\n"
-        "- **cache**: Status da conexão com Redis"
+        "- **cache**: Status da conexão com Redis\n"
+        "- **llm**: Status do LLM Router\n"
+        "- **sandbox**: Status do E2B Sandbox"
     ),
     tags=["Sistema"],
 )
 async def health_check():
     """Health check endpoint for monitoring."""
     cache_status = await get_cache_status()
+    llm_status = get_router_stats()
+    sandbox_status = get_sandbox_status()
 
     return {
         "status": "healthy",
         "version": "1.0.0",
         "cache": cache_status["redis"],
+        "llm": llm_status,
+        "sandbox": sandbox_status,
     }
+
+
+@app.get(
+    "/metrics/llm",
+    summary="Métricas do LLM Router",
+    description=(
+        "Retorna métricas detalhadas do LLM Router:\n\n"
+        "- **status**: active/disabled/error\n"
+        "- **deployments**: Número de provedores configurados\n"
+        "- **routing_strategy**: Estratégia de balanceamento"
+    ),
+    tags=["Sistema"],
+)
+async def llm_metrics():
+    """Return LLM Router metrics for monitoring."""
+    return get_router_stats()
 
 
 @app.get("/", include_in_schema=False)

@@ -1,19 +1,16 @@
-"""Insight generator with news context and Claude LLM."""
+"""Insight generator with news context and LLM (via LiteLLM Router)."""
 
 import logging
 from datetime import datetime
 from urllib.parse import quote
 
-import anthropic
 import feedparser
 
 from .config import settings
+from .llm_router import call_llm
 from .models import ClassificationResult, InsightResult, NewsItem
 
 logger = logging.getLogger(__name__)
-
-# Global Anthropic client (singleton)
-_anthropic_client: anthropic.Anthropic | None = None
 
 # Forbidden words for compliance validation (Portuguese)
 FORBIDDEN_WORDS = [
@@ -29,18 +26,6 @@ FORBIDDEN_WORDS = [
     "buy",
     "sell",
 ]
-
-
-def get_anthropic_client() -> anthropic.Anthropic:
-    """Return Anthropic client (singleton pattern)."""
-    global _anthropic_client
-
-    if _anthropic_client is None:
-        _anthropic_client = anthropic.Anthropic(
-            api_key=settings.anthropic_api_key,
-        )
-
-    return _anthropic_client
 
 
 async def fetch_news(
@@ -168,12 +153,12 @@ async def generate_insight(
     classification: ClassificationResult,
     news: list[NewsItem] | None = None,
 ) -> InsightResult:
-    """Generate contextualized insight using Claude LLM.
+    """Generate contextualized insight using LLM Router.
 
     Pipeline:
     1. Fetch news if not provided
     2. Build prompt with technical classification + news context
-    3. Call Claude to generate insight
+    3. Call LLM via Router (with automatic fallback)
     4. Validate compliance (no investment recommendations)
     5. Regenerate if validation fails
 
@@ -205,24 +190,17 @@ async def generate_insight(
         news_context=news_context,
     )
 
-    # Call Claude API
+    # Call LLM via Router (automatic fallback, health checks, retries)
     try:
-        client = get_anthropic_client()
-        response = client.messages.create(
-            model=settings.llm_model,
-            max_tokens=settings.llm_max_tokens,
-            messages=[{"role": "user", "content": prompt}],
+        insight_text = await call_llm(
+            messages=[{"role": "user", "content": prompt}]
         )
-
-        insight_text = response.content[0].text.strip()
 
         # Validate compliance
         if not validate_insight(insight_text):
             # Regenerate with stronger instruction if failed
             logger.warning("Insight failed validation, regenerating...")
-            response = client.messages.create(
-                model=settings.llm_model,
-                max_tokens=settings.llm_max_tokens,
+            insight_text = await call_llm(
                 messages=[
                     {"role": "user", "content": prompt},
                     {"role": "assistant", "content": insight_text},
@@ -234,9 +212,8 @@ async def generate_insight(
                             "sem NENHUMA sugestão de compra ou venda."
                         ),
                     },
-                ],
+                ]
             )
-            insight_text = response.content[0].text.strip()
 
         # Extract unique news sources
         news_sources = list({item.source for item in news[:5]})
