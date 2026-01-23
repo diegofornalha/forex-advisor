@@ -5,14 +5,16 @@ Uses the project's markdown files as knowledge base via system prompt.
 """
 
 import asyncio
+import json
 import logging
 import re
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncGenerator
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from .cache import get_cached, set_cached
@@ -182,6 +184,15 @@ class DocsSession(BaseModel):
 
 # In-memory sessions (can be moved to Redis later)
 _sessions: dict[str, DocsSession] = {}
+
+# Pending SSE streams - stores asyncio.Queue for each request_id
+_pending_streams: dict[str, asyncio.Queue] = {}
+
+# Pending requests metadata (message, session, etc.)
+_pending_requests: dict[str, dict[str, Any]] = {}
+
+# Events to signal when SSE client has connected
+_sse_connected_events: dict[str, asyncio.Event] = {}
 
 
 def load_documentation() -> dict[str, str]:
@@ -401,6 +412,184 @@ async def generate_docs_response(
         return f"Erro ao gerar resposta: {str(e)}"
 
 
+async def generate_docs_response_streaming(
+    request_id: str,
+    message: str,
+    session: DocsSession,
+) -> None:
+    """Generate response for docs chat with real-time streaming via SSE.
+
+    Streams chunks to the SSE queue in real-time.
+    Applies guardrails at the end and sends sanitized flag.
+
+    Args:
+        request_id: Unique ID for this request
+        message: User message
+        session: Chat session with history
+    """
+    queue = _pending_streams.get(request_id)
+    if not queue:
+        logger.error(f"SSE queue not found for request_id: {request_id}")
+        return
+
+    # Wait for SSE client to connect (max 10 seconds)
+    connected_event = _sse_connected_events.get(request_id)
+    if connected_event:
+        try:
+            await asyncio.wait_for(connected_event.wait(), timeout=10.0)
+            logger.info(f"SSE client ready, starting generation for request_id: {request_id}")
+        except asyncio.TimeoutError:
+            logger.warning(f"SSE client did not connect in time for request_id: {request_id}")
+            await queue.put({"type": "error", "message": "Cliente SSE não conectou a tempo."})
+            await queue.put({"type": "done"})
+            return
+
+    llm_router = get_router()
+
+    if llm_router is None:
+        await queue.put({"type": "error", "message": "LLM não configurado."})
+        await queue.put({"type": "done"})
+        return
+
+    try:
+        # Build messages with history
+        messages = [
+            {"role": "system", "content": build_docs_system_prompt()},
+        ]
+
+        # Add history (last N messages)
+        max_history = getattr(settings, 'docs_chat_max_history', 20)
+        for msg in session.messages[-max_history:]:
+            messages.append({
+                "role": msg.role,
+                "content": msg.content,
+            })
+
+        # Add current message
+        messages.append({"role": "user", "content": message})
+
+        # Log context size for debugging
+        total_chars = sum(len(m.get("content", "")) for m in messages)
+        logger.info(f"Docs chat SSE: {len(messages)} messages, {total_chars} total chars")
+
+        # Generate response with streaming
+        full_response = ""
+        try:
+            response = await asyncio.wait_for(
+                llm_router.acompletion(
+                    messages=messages,
+                    max_tokens=settings.llm_max_tokens,
+                    stream=True,  # Real streaming!
+                ),
+                timeout=60.0,
+            )
+
+            # Stream chunks in real-time
+            async for chunk in response:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    content = chunk.choices[0].delta.content
+                    full_response += content
+                    await queue.put({"type": "chunk", "content": content})
+
+        except asyncio.TimeoutError:
+            logger.error("Docs chat SSE: LLM timeout after 60 seconds")
+            await queue.put({
+                "type": "error",
+                "message": "Resposta demorou muito. Tente novamente.",
+            })
+            await queue.put({"type": "done"})
+            return
+
+        logger.info(f"Docs chat SSE: LLM response complete, {len(full_response)} chars")
+
+        # Apply guardrails at the end
+        sanitized_response = sanitize_response(full_response)
+        was_sanitized = sanitized_response != full_response
+
+        if was_sanitized:
+            logger.info(
+                f"SSE Guardrail activated: original={len(full_response)} chars, "
+                f"sanitized={len(sanitized_response)} chars"
+            )
+
+        # Store final response for session save
+        _pending_requests[request_id]["response"] = sanitized_response
+        _pending_requests[request_id]["was_sanitized"] = was_sanitized
+
+        # Send done with sanitization info
+        await queue.put({
+            "type": "done",
+            "sanitized": was_sanitized,
+            "final_response": sanitized_response if was_sanitized else None,
+        })
+
+    except Exception as e:
+        logger.error(f"Error in SSE streaming: {e}")
+        await queue.put({"type": "error", "message": str(e)})
+        await queue.put({"type": "done"})
+
+
+@router.get("/sse/docs/{request_id}")
+async def docs_sse_stream(request_id: str):
+    """SSE endpoint for streaming docs chat responses.
+
+    The client connects here after receiving stream_url from WebSocket.
+    Streams LLM chunks in real-time.
+
+    Args:
+        request_id: Unique request ID from WebSocket
+
+    Returns:
+        StreamingResponse with SSE events
+    """
+    async def event_generator() -> AsyncGenerator[str, None]:
+        # Get or create queue for this request
+        queue = _pending_streams.get(request_id)
+        if not queue:
+            yield f"event: error\ndata: {json.dumps({'message': 'Request not found'})}\n\n"
+            return
+
+        # Signal that SSE client has connected
+        if request_id in _sse_connected_events:
+            _sse_connected_events[request_id].set()
+            logger.info(f"SSE client connected for request_id: {request_id}")
+
+        try:
+            while True:
+                # Wait for next item from queue
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=65.0)
+                except asyncio.TimeoutError:
+                    yield f"event: error\ndata: {json.dumps({'message': 'Stream timeout'})}\n\n"
+                    break
+
+                if item["type"] == "chunk":
+                    yield f"data: {json.dumps({'content': item['content']})}\n\n"
+                elif item["type"] == "error":
+                    yield f"event: error\ndata: {json.dumps({'message': item['message']})}\n\n"
+                elif item["type"] == "done":
+                    done_data = {"sanitized": item.get("sanitized", False)}
+                    if item.get("final_response"):
+                        done_data["final_response"] = item["final_response"]
+                    yield f"event: done\ndata: {json.dumps(done_data)}\n\n"
+                    break
+
+        finally:
+            # Cleanup
+            if request_id in _pending_streams:
+                del _pending_streams[request_id]
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        },
+    )
+
+
 def _is_valid_uuid(value: str) -> bool:
     """Validate if string is a valid UUID."""
     if not value:
@@ -414,6 +603,41 @@ def _is_valid_uuid(value: str) -> bool:
 
 # Max message size (10KB)
 MAX_MESSAGE_SIZE = 10 * 1024
+
+
+@router.get("/api/docs/session/{session_id}")
+async def get_docs_session_endpoint(session_id: str):
+    """Get docs chat session history.
+
+    Used by frontend to sync messages after reconnection.
+
+    Args:
+        session_id: Session UUID
+
+    Returns:
+        Session with messages or error
+    """
+    if not _is_valid_uuid(session_id):
+        return {"error": "Invalid session_id format", "session_id": session_id}
+
+    session = await get_docs_session(session_id)
+
+    if not session:
+        return {"error": "Session not found", "session_id": session_id}
+
+    return {
+        "session_id": session.session_id,
+        "messages": [
+            {
+                "role": msg.role,
+                "content": msg.content,
+                "timestamp": msg.timestamp,
+            }
+            for msg in session.messages
+        ],
+        "created_at": session.created_at,
+        "last_activity": session.last_activity,
+    }
 
 
 @router.websocket("/ws/docs/{session_id}")
@@ -497,28 +721,65 @@ async def docs_chat_websocket(websocket: WebSocket, session_id: str | None = Non
                 timestamp=datetime.utcnow().isoformat(),
             ))
 
-            # Generate response
-            response_text = await generate_docs_response(
-                user_message,
-                session,
-                websocket,
+            # Create unique request ID for SSE streaming
+            request_id = str(uuid.uuid4())
+
+            # Create queue for this request
+            _pending_streams[request_id] = asyncio.Queue()
+
+            # Create event to signal when SSE client connects
+            _sse_connected_events[request_id] = asyncio.Event()
+
+            # Store request metadata
+            _pending_requests[request_id] = {
+                "session": session,
+                "message": user_message,
+                "response": None,
+                "was_sanitized": False,
+            }
+
+            # Send stream_url to client
+            stream_url = f"/sse/docs/{request_id}"
+            await websocket.send_json({
+                "type": "stream_url",
+                "url": stream_url,
+                "request_id": request_id,
+            })
+
+            # Start streaming generation in background
+            asyncio.create_task(
+                generate_docs_response_streaming(request_id, user_message, session)
             )
 
+            # Wait for streaming to complete (poll the request)
+            while request_id in _pending_requests:
+                await asyncio.sleep(0.1)
+                # Check if response is ready
+                if _pending_requests[request_id].get("response") is not None:
+                    break
+
+            # Get final response
+            response_text = _pending_requests.get(request_id, {}).get("response", "")
+
+            # Cleanup request metadata and events
+            if request_id in _pending_requests:
+                del _pending_requests[request_id]
+            if request_id in _sse_connected_events:
+                del _sse_connected_events[request_id]
+
             # Add assistant message to session
-            session.messages.append(DocsMessage(
-                role="assistant",
-                content=response_text,
-                timestamp=datetime.utcnow().isoformat(),
-            ))
+            if response_text:
+                session.messages.append(DocsMessage(
+                    role="assistant",
+                    content=response_text,
+                    timestamp=datetime.utcnow().isoformat(),
+                ))
 
             # Update session activity
             session.last_activity = datetime.utcnow().isoformat()
 
             # Save session
             await save_docs_session(session)
-
-            # Send done signal
-            await websocket.send_json({"type": "done"})
 
     except WebSocketDisconnect:
         logger.info(f"Docs WebSocket disconnected: {session_id}")
