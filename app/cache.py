@@ -195,3 +195,63 @@ async def get_cache_status() -> dict[str, Any]:
         "redis_keys": redis_keys,
         "memory_keys": len(_memory_cache),
     }
+
+
+async def list_sessions() -> list[dict[str, Any]]:
+    """List all chat sessions from cache.
+
+    Returns:
+        List of session summaries with id, type, messages count, last activity
+    """
+    sessions = []
+
+    # Patterns for session keys
+    patterns = [
+        ("chat:session:*", "chat"),
+        ("docs_chat:session:*", "docs"),
+    ]
+
+    # Try Redis first
+    try:
+        client = await get_redis()
+        if client:
+            for pattern, session_type in patterns:
+                keys = await client.keys(pattern)
+                for key in keys or []:
+                    try:
+                        value = await client.get(key)
+                        if value:
+                            data = json.loads(value)
+                            session_id = key.split(":")[-1]
+                            sessions.append({
+                                "session_id": session_id,
+                                "type": session_type,
+                                "messages_count": len(data.get("messages", [])),
+                                "last_activity": data.get("last_activity"),
+                                "created_at": data.get("created_at"),
+                            })
+                    except Exception as e:
+                        logger.warning(f"Error reading session {key}: {e}")
+    except Exception as e:
+        logger.warning(f"Error listing sessions from Redis: {e}")
+
+    # Also check memory cache
+    for key, (value, _) in _memory_cache.items():
+        if key.startswith("chat:session:") or key.startswith("docs_chat:session:"):
+            session_id = key.split(":")[-1]
+            # Skip if already in list from Redis
+            if any(s["session_id"] == session_id for s in sessions):
+                continue
+            session_type = "chat" if key.startswith("chat:") else "docs"
+            sessions.append({
+                "session_id": session_id,
+                "type": session_type,
+                "messages_count": len(value.get("messages", [])),
+                "last_activity": value.get("last_activity"),
+                "created_at": value.get("created_at"),
+            })
+
+    # Sort by last_activity descending
+    sessions.sort(key=lambda x: x.get("last_activity") or "", reverse=True)
+
+    return sessions

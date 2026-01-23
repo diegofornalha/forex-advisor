@@ -1,20 +1,81 @@
 """FastAPI application with Forex Advisor endpoints."""
 
 import logging
+import time
+from collections import defaultdict
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
+from .admin import router as admin_router, set_rag_instance
 from .cache import get_cache_status, get_cached, set_cached
-from .chat import router as chat_router
+from .chat import get_rag, router as chat_router
 from .config import settings
+from .docs_chat import router as docs_chat_router
 from .insights import generate_insight
 from .llm_router import get_router_stats
 from .models import InsightResponse, TechnicalResponse
 from .recommendation import get_classification
 from .sandbox import close_sandbox, get_sandbox_status
+
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    """Simple in-memory rate limiting middleware."""
+
+    def __init__(self, app, requests_per_minute: int = 100):
+        super().__init__(app)
+        self.requests_per_minute = requests_per_minute
+        self.window = 60  # seconds
+        self._requests: dict[str, list[float]] = defaultdict(list)
+
+    def _get_client_ip(self, request: Request) -> str:
+        """Get client IP from request."""
+        # Check for forwarded header (behind proxy)
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+        return request.client.host if request.client else "unknown"
+
+    def _is_rate_limited(self, client_ip: str) -> bool:
+        """Check if client is rate limited."""
+        now = time.time()
+        window_start = now - self.window
+
+        # Clean old requests
+        self._requests[client_ip] = [
+            t for t in self._requests[client_ip] if t > window_start
+        ]
+
+        # Check limit
+        if len(self._requests[client_ip]) >= self.requests_per_minute:
+            return True
+
+        # Record request
+        self._requests[client_ip].append(now)
+        return False
+
+    async def dispatch(self, request: Request, call_next):
+        # Skip rate limiting for health check
+        if request.url.path == "/health":
+            return await call_next(request)
+
+        client_ip = self._get_client_ip(request)
+
+        if self._is_rate_limited(client_ip):
+            logger.warning(f"Rate limit exceeded for {client_ip}")
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "detail": "Rate limit exceeded. Please try again later.",
+                    "retry_after": self.window,
+                },
+                headers={"Retry-After": str(self.window)},
+            )
+
+        return await call_next(request)
 
 # Configure logging
 logging.basicConfig(
@@ -31,9 +92,27 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 Iniciando Forex Advisor API...")
     logger.info(f"   Símbolo: {settings.symbol}")
     logger.info(f"   Cache TTL: {settings.cache_ttl_insight}s")
+
+    # Pre-carregar modelo de embedding do RAG
+    try:
+        rag = get_rag()
+        rag.preload_model()
+        # Set RAG instance for admin panel
+        set_rag_instance(rag)
+    except Exception as e:
+        logger.warning(f"Não foi possível pre-carregar modelo RAG: {e}")
+
     yield
     # Shutdown
     logger.info("👋 Encerrando Forex Advisor API...")
+
+    # Fechar conexão do RAG
+    try:
+        rag = get_rag()
+        rag.close()
+    except Exception as e:
+        logger.warning(f"Erro ao fechar RAG: {e}")
+
     close_sandbox()  # Cleanup E2B sandbox
 
 
@@ -47,9 +126,12 @@ app = FastAPI(
         "- `/api/v1/forex/usdbrl/technical` - Apenas análise técnica\n"
         "- `/health` - Status do serviço"
     ),
-    version="0.2.0",
+    version="0.4.0",
     lifespan=lifespan,
 )
+
+# Rate limiting middleware
+app.add_middleware(RateLimitMiddleware, requests_per_minute=settings.rate_limit_requests)
 
 # CORS middleware for frontend integration
 app.add_middleware(
@@ -65,12 +147,14 @@ app.add_middleware(
     ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["*"],
+    allow_headers=["Content-Type", "Authorization", "Accept", "Origin", "X-Requested-With"],
     expose_headers=["X-Cache"],
 )
 
-# Include chat router
+# Include routers
 app.include_router(chat_router)
+app.include_router(docs_chat_router)
+app.include_router(admin_router)
 
 
 @app.get(
