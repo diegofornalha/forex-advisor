@@ -1,0 +1,393 @@
+# Especificação: Forex Advisor v0.3
+
+> Limpeza de Débitos Técnicos do Frontend
+
+## Metadados
+
+| Campo | Valor |
+|-------|-------|
+| **Versão** | 0.3.0 |
+| **Tipo** | Manutenção / Refatoração |
+| **Prioridade** | Alta |
+| **Escopo** | Frontend |
+| **Pré-requisito** | v0.2.0 |
+| **Bloqueia** | v0.4.0 |
+
+## Visão Geral
+
+A v0.3 foca em eliminar débitos técnicos acumulados no frontend durante o desenvolvimento rápido da POC. O objetivo é deixar o código limpo, sem dependências mortas, e com UX resiliente para reconexões e persistência de estado.
+
+### Objetivos
+
+1. **Código Limpo**: Remover código e dependências não utilizadas
+2. **UX Resiliente**: Implementar retry automático e feedback visual
+3. **Persistência**: Manter estado do chat entre recarregamentos
+4. **Preparação**: Base sólida para integrar melhorias do backend (v0.4)
+
+---
+
+## Requisitos
+
+### Requisitos Funcionais
+
+#### RF-01: Remover Código Morto do Supabase
+**Prioridade**: Alta
+**Débito**: DT-F1
+
+O projeto contém configuração e código do Supabase que não são utilizados (remanescente de projeto anterior).
+
+**Critérios de Aceitação**:
+- [ ] Arquivo `src/integrations/supabase/` removido
+- [ ] Dependência `@supabase/supabase-js` removida do package.json
+- [ ] Nenhuma referência a "supabase" no código
+- [ ] Build passa sem erros
+
+**Arquivos Afetados**:
+```
+REMOVER:
+├── src/integrations/supabase/
+│   ├── client.ts
+│   ├── types.ts
+│   └── index.ts
+├── supabase/ (se existir)
+
+MODIFICAR:
+├── package.json (remover dependência)
+└── src/*.ts (remover imports se houver)
+```
+
+---
+
+#### RF-02: Limpar Imports Não Utilizados
+**Prioridade**: Baixa
+**Débito**: DT-F2
+
+Recharts está importado mas não é utilizado atualmente.
+
+**Critérios de Aceitação**:
+- [ ] Verificar se Recharts é usado em algum componente
+- [ ] Se não usado, remover dependência do package.json
+- [ ] Remover imports órfãos em todos os arquivos
+- [ ] Bundle size reduzido (verificar com `npm run build`)
+
+**Arquivos Afetados**:
+```
+VERIFICAR:
+├── src/components/**/*.tsx
+└── package.json
+
+POSSÍVEL REMOÇÃO:
+└── recharts (se não usado)
+```
+
+---
+
+#### RF-03: Implementar Retry Automático no WebSocket
+**Prioridade**: Alta
+**Débito**: DT-F6
+
+O hook `useChat` já tem lógica de reconexão, mas precisa de melhorias:
+
+**Critérios de Aceitação**:
+- [ ] Retry com backoff exponencial (1s, 2s, 4s, 8s, max 30s)
+- [ ] Máximo de 10 tentativas antes de desistir
+- [ ] Feedback visual durante reconexão ("Reconectando...")
+- [ ] Botão manual de reconexão após falha
+- [ ] Mensagens pendentes são reenviadas após reconexão
+- [ ] Log de tentativas de reconexão no console (dev only)
+
+**Arquivos a Modificar**:
+```
+src/hooks/useChat.ts
+├── Adicionar backoff exponencial
+├── Aumentar MAX_RECONNECT_ATTEMPTS para 10
+├── Adicionar estado `reconnectAttempt`
+└── Adicionar fila de mensagens pendentes
+
+src/components/chat/ChatPanel.tsx
+├── Exibir estado de reconexão
+├── Botão "Reconectar" quando falha
+└── Contador de tentativas
+```
+
+**Implementação Sugerida**:
+```typescript
+// useChat.ts
+const INITIAL_RECONNECT_DELAY = 1000;
+const MAX_RECONNECT_DELAY = 30000;
+const MAX_RECONNECT_ATTEMPTS = 10;
+
+const [reconnectAttempt, setReconnectAttempt] = useState(0);
+const [isReconnecting, setIsReconnecting] = useState(false);
+const pendingMessages = useRef<string[]>([]);
+
+const getReconnectDelay = (attempt: number) => {
+  return Math.min(INITIAL_RECONNECT_DELAY * Math.pow(2, attempt), MAX_RECONNECT_DELAY);
+};
+
+// Na reconexão bem sucedida:
+pendingMessages.current.forEach(msg => sendMessage(msg));
+pendingMessages.current = [];
+```
+
+---
+
+#### RF-04: Persistência de Chat em localStorage
+**Prioridade**: Média
+**Débito**: DT-F7
+
+O histórico de chat é perdido ao recarregar a página.
+
+**Critérios de Aceitação**:
+- [ ] Histórico salvo em localStorage por sessão
+- [ ] Máximo de 50 mensagens persistidas
+- [ ] Session ID persistido para reconexão
+- [ ] Botão "Limpar histórico" funciona corretamente
+- [ ] Dados expiram após 24h de inatividade
+- [ ] Migração suave (não quebra usuários existentes)
+
+**Arquivos a Modificar**:
+```
+src/hooks/useChat.ts
+├── Adicionar loadFromStorage()
+├── Adicionar saveToStorage()
+├── Hook useEffect para persistência
+└── Lógica de expiração
+
+src/lib/chat-storage.ts (NOVO)
+├── STORAGE_KEY = 'forex-advisor-chat'
+├── saveChat(session: ChatSession)
+├── loadChat(): ChatSession | null
+├── clearChat()
+└── isExpired(session): boolean
+```
+
+**Estrutura de Storage**:
+```typescript
+interface StoredChat {
+  sessionId: string;
+  messages: ChatMessage[];
+  lastActivity: number; // timestamp
+  version: 1; // para migrações futuras
+}
+```
+
+---
+
+#### RF-05: Indicador de Status de Conexão
+**Prioridade**: Média
+**Débito**: DT-F5
+
+Usuário não tem feedback visual sobre o estado da conexão.
+
+**Critérios de Aceitação**:
+- [ ] Indicador visual no header do chat
+- [ ] Estados: Conectado (verde), Reconectando (amarelo), Desconectado (vermelho)
+- [ ] Tooltip com detalhes (tempo conectado, tentativas)
+- [ ] Animação de pulse quando reconectando
+- [ ] Acessível (aria-labels)
+
+**Arquivos a Modificar**:
+```
+src/components/chat/ChatPanel.tsx
+├── Adicionar ConnectionStatus component
+└── Passar estado de conexão
+
+src/components/chat/ConnectionStatus.tsx (NOVO)
+├── Props: { status, reconnectAttempt?, lastConnected? }
+├── Ícones por estado
+├── Tooltip com detalhes
+└── Animação de reconexão
+```
+
+**Design Visual**:
+```
+┌─────────────────────────────────────┐
+│ Chat                    ● Conectado │
+│                         ◐ Reconectando (3/10)
+│                         ○ Desconectado
+└─────────────────────────────────────┘
+```
+
+---
+
+### Requisitos Não Funcionais
+
+#### RNF-01: Performance
+- Bundle size não deve aumentar mais que 5KB
+- Tempo de reconexão < 100ms (após delay)
+- localStorage operations < 10ms
+
+#### RNF-02: Compatibilidade
+- Funciona em Chrome, Firefox, Safari, Edge (últimas 2 versões)
+- localStorage fallback se não disponível (warn no console)
+
+#### RNF-03: Manutenibilidade
+- Código documentado com JSDoc
+- Testes unitários para lógica de retry e storage
+
+---
+
+## Abordagem Técnica
+
+### Arquitetura de Mudanças
+
+```
+src/
+├── components/
+│   └── chat/
+│       ├── ChatPanel.tsx        [MODIFICAR]
+│       ├── ConnectionStatus.tsx [CRIAR]
+│       └── ...
+├── hooks/
+│   └── useChat.ts               [MODIFICAR]
+├── lib/
+│   └── chat-storage.ts          [CRIAR]
+├── integrations/
+│   └── supabase/                [REMOVER]
+└── types/
+    └── chat.ts                  [MODIFICAR: adicionar StoredChat]
+```
+
+### Decisões de Design
+
+1. **localStorage vs IndexedDB**: localStorage é suficiente para 50 mensagens (~100KB max)
+2. **Backoff exponencial**: Padrão da indústria para retry
+3. **Expiração 24h**: Balança UX vs privacidade
+4. **Versão no storage**: Permite migrações futuras sem quebrar
+
+---
+
+## Fases de Implementação
+
+### Fase 1: Limpeza de Código (Quick Wins)
+**Tarefas**:
+- [ ] 1.1 Remover diretório `src/integrations/supabase/`
+- [ ] 1.2 Remover `@supabase/supabase-js` do package.json
+- [ ] 1.3 Verificar e limpar imports órfãos
+- [ ] 1.4 Verificar uso de Recharts, remover se não usado
+- [ ] 1.5 Executar `npm run build` e verificar bundle size
+- [ ] 1.6 Commit: "chore: remove unused Supabase and clean imports"
+
+### Fase 2: Chat Storage
+**Tarefas**:
+- [ ] 2.1 Criar `src/lib/chat-storage.ts`
+- [ ] 2.2 Implementar `saveChat`, `loadChat`, `clearChat`
+- [ ] 2.3 Adicionar lógica de expiração (24h)
+- [ ] 2.4 Integrar storage no `useChat.ts`
+- [ ] 2.5 Testar persistência (recarregar página)
+- [ ] 2.6 Commit: "feat: persist chat history in localStorage"
+
+### Fase 3: Retry Resiliente
+**Tarefas**:
+- [ ] 3.1 Refatorar lógica de reconexão em `useChat.ts`
+- [ ] 3.2 Implementar backoff exponencial
+- [ ] 3.3 Adicionar fila de mensagens pendentes
+- [ ] 3.4 Adicionar estado `isReconnecting` e `reconnectAttempt`
+- [ ] 3.5 Testar cenários de desconexão
+- [ ] 3.6 Commit: "feat: exponential backoff for WebSocket reconnection"
+
+### Fase 4: UI de Status
+**Tarefas**:
+- [ ] 4.1 Criar componente `ConnectionStatus.tsx`
+- [ ] 4.2 Integrar no `ChatPanel.tsx`
+- [ ] 4.3 Adicionar estilos e animações
+- [ ] 4.4 Adicionar acessibilidade (aria-labels)
+- [ ] 4.5 Testar visual em diferentes estados
+- [ ] 4.6 Commit: "feat: connection status indicator in chat"
+
+### Fase 5: Testes e Documentação
+**Tarefas**:
+- [ ] 5.1 Escrever testes para `chat-storage.ts`
+- [ ] 5.2 Escrever testes para lógica de retry
+- [ ] 5.3 Atualizar README com novas features
+- [ ] 5.4 Verificar TypeScript strict mode
+- [ ] 5.5 Code review final
+- [ ] 5.6 Tag: v0.3.0
+
+---
+
+## Dependências
+
+### Internas
+- v0.2.0 deve estar completa e funcional
+
+### Externas
+- Nenhuma nova dependência necessária
+- Remoção de `@supabase/supabase-js` (~150KB do bundle)
+
+### Bloqueios
+- Nenhum bloqueio identificado
+
+---
+
+## Riscos e Mitigações
+
+| Risco | Probabilidade | Impacto | Mitigação |
+|-------|---------------|---------|-----------|
+| localStorage cheio | Baixa | Médio | Limite de 50 msgs, limpeza automática |
+| Supabase usado em algum lugar escondido | Baixa | Alto | Grep completo antes de remover |
+| Recharts necessário para feature futura | Média | Baixo | Verificar roadmap v2 antes de remover |
+| Reconexão agressiva sobrecarrega servidor | Baixa | Médio | Backoff exponencial com max 30s |
+
+---
+
+## Critérios de Aceitação da Release
+
+### Checklist de Release v0.3.0
+
+**Funcional**:
+- [ ] Código Supabase completamente removido
+- [ ] Nenhum import não utilizado
+- [ ] WebSocket reconecta automaticamente
+- [ ] Chat persiste após recarregar página
+- [ ] Indicador de status visível e funcional
+
+**Técnico**:
+- [ ] Build passa sem warnings
+- [ ] Bundle size igual ou menor que v0.2
+- [ ] Testes de storage passando
+- [ ] TypeScript sem erros
+
+**Documentação**:
+- [ ] CHANGELOG atualizado
+- [ ] README atualizado (se necessário)
+
+---
+
+## Métricas de Sucesso
+
+| Métrica | Baseline (v0.2) | Target (v0.3) |
+|---------|-----------------|---------------|
+| Bundle size | ~1.2MB | < 1.1MB |
+| Reconexão bem sucedida | N/A | > 95% |
+| Chat persistido | 0% | 100% |
+| Dependências não usadas | 2 | 0 |
+
+---
+
+## Cronograma Sugerido
+
+| Fase | Tarefas | Complexidade |
+|------|---------|--------------|
+| Fase 1 | Limpeza de código | Baixa |
+| Fase 2 | Chat storage | Média |
+| Fase 3 | Retry resiliente | Média |
+| Fase 4 | UI de status | Baixa |
+| Fase 5 | Testes e docs | Baixa |
+
+---
+
+## Referências
+
+- [Roadmap Completo](ROADMAP-COMPLETE.md)
+- [Frontend Codebase](/Users/2a/.claude/forex-advisor-front/prototipo)
+- [useChat Hook](/Users/2a/.claude/forex-advisor-front/prototipo/src/hooks/useChat.ts)
+
+---
+
+## Histórico
+
+| Data | Versão | Autor | Mudanças |
+|------|--------|-------|----------|
+| 2026-01-23 | 1.0 | Claude | Criação inicial |

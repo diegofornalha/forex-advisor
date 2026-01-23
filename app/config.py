@@ -15,9 +15,7 @@ class Settings(BaseSettings):
     )
 
     # API
-    app_name: str = "Forex Advisor API"
     debug: bool = False
-    api_version: str = "v1"
 
     # Market data
     symbol: str = "USDBRL=X"
@@ -27,10 +25,8 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379"
     cache_ttl_insight: int = 3600  # 1 hour for full insight
     cache_ttl_technical: int = 14400  # 4 hours for technical only
-    cache_ttl_news: int = 86400  # 24 hours for news
 
-
-    # LLM - POC usa apenas Minimax (v1: adicionar Vertex AI e Anthropic fallbacks)
+    # LLM - Minimax
     llm_timeout: int = 30
     llm_max_tokens: int = 800
     minimax_token: str = ""
@@ -42,7 +38,6 @@ class Settings(BaseSettings):
     e2b_timeout: int = 180  # segundos
 
     # News
-    embedding_model: str = "BAAI/bge-small-en-v1.5"
     news_query: str = "dólar real câmbio brasil"
     news_limit: int = 10
 

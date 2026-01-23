@@ -105,9 +105,3 @@ class TechnicalResponse(BaseModel):
     )
 
 
-class HealthResponse(BaseModel):
-    """Response model for health check."""
-
-    status: str = Field(..., description="Status do serviço")
-    version: str = Field(..., description="Versão da API")
-    cache: str = Field(..., description="Status da conexão com cache")

@@ -12,7 +12,7 @@ from .chat import router as chat_router
 from .config import settings
 from .insights import generate_insight
 from .llm_router import get_router_stats
-from .models import HealthResponse, InsightResponse, TechnicalResponse
+from .models import InsightResponse, TechnicalResponse
 from .recommendation import get_classification
 from .sandbox import close_sandbox, get_sandbox_status
 

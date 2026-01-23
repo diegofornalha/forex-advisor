@@ -28,31 +28,21 @@ FORBIDDEN_WORDS = [
 ]
 
 
-async def fetch_news(
-    query: str = None,
-    limit: int = None,
-) -> list[NewsItem]:
+async def fetch_news() -> list[NewsItem]:
     """Fetch news from Google News RSS feed.
-
-    Args:
-        query: Search term (default: settings.news_query)
-        limit: Max number of news items (default: settings.news_limit)
 
     Returns:
         List of NewsItem objects
     """
-    query = query or settings.news_query
-    limit = limit or settings.news_limit
-
     # Google News RSS URL for Brazil
-    encoded_query = quote(query)
+    encoded_query = quote(settings.news_query)
     url = f"https://news.google.com/rss/search?q={encoded_query}&hl=pt-BR&gl=BR&ceid=BR:pt-419"
 
     try:
         feed = feedparser.parse(url)
         news_items = []
 
-        for entry in feed.entries[:limit]:
+        for entry in feed.entries[:settings.news_limit]:
             # Parse publication date
             published_at = datetime.now()
             if hasattr(entry, "published_parsed") and entry.published_parsed:
@@ -76,7 +66,7 @@ async def fetch_news(
                 )
             )
 
-        logger.info(f"Fetched {len(news_items)} news items for '{query}'")
+        logger.info(f"Fetched {len(news_items)} news items for '{settings.news_query}'")
         return news_items
 
     except Exception as e:

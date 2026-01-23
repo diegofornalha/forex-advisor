@@ -1,0 +1,615 @@
+# Especificação: Forex Advisor v1.0
+
+> Estabilidade e Preparação para Produção
+
+## Metadados
+
+| Campo | Valor |
+|-------|-------|
+| **Versão** | 1.0.0 |
+| **Tipo** | Release de Produção |
+| **Prioridade** | Alta |
+| **Escopo** | Full Stack |
+| **Pré-requisito** | v0.4.0 |
+| **Bloqueia** | v2.0.0 |
+
+## Visão Geral
+
+A v1.0 marca a primeira release de produção do Forex Advisor. Com os débitos técnicos resolvidos nas versões 0.3 e 0.4, esta versão foca em **observabilidade**, **qualidade** e **operações** para garantir um sistema confiável em produção.
+
+### Objetivos
+
+1. **Observabilidade**: Métricas Prometheus + Dashboard Grafana
+2. **Qualidade**: Testes E2E cobrindo fluxos críticos
+3. **Automação**: CI/CD pipeline completo
+4. **Documentação**: API docs completa e guias de operação
+5. **Alinhamento**: Backend e frontend totalmente sincronizados
+
+---
+
+## Requisitos
+
+### Requisitos Funcionais
+
+#### RF-01: Métricas Prometheus
+**Prioridade**: Alta
+**Débito**: DT-B3
+
+Implementar exportação de métricas para Prometheus.
+
+**Métricas Requeridas**:
+
+| Métrica | Tipo | Labels | Descrição |
+|---------|------|--------|-----------|
+| `forex_api_requests_total` | Counter | endpoint, method, status | Total de requests |
+| `forex_api_latency_seconds` | Histogram | endpoint | Latência por endpoint |
+| `forex_llm_requests_total` | Counter | provider, status | Requests por LLM provider |
+| `forex_llm_latency_seconds` | Histogram | provider | Latência do LLM |
+| `forex_llm_tokens_total` | Counter | provider, type | Tokens consumidos |
+| `forex_cache_hits_total` | Counter | cache_type | Cache hits |
+| `forex_cache_misses_total` | Counter | cache_type | Cache misses |
+| `forex_websocket_connections` | Gauge | - | Conexões WS ativas |
+| `forex_chat_messages_total` | Counter | role | Mensagens de chat |
+| `forex_code_executions_total` | Counter | status | Execuções de código |
+| `forex_rag_searches_total` | Counter | - | Buscas no RAG |
+| `forex_rag_documents_total` | Gauge | - | Documentos no RAG |
+
+**Critérios de Aceitação**:
+- [ ] Endpoint `/metrics` expõe métricas em formato Prometheus
+- [ ] Todas as métricas listadas implementadas
+- [ ] Labels consistentes e úteis
+- [ ] Histogramas com buckets adequados
+- [ ] Documentação das métricas
+
+**Arquivos a Criar/Modificar**:
+```
+app/metrics.py (NOVO)
+├── Definição de métricas
+├── Instrumentação helpers
+└── Registry setup
+
+app/main.py
+├── Endpoint /metrics
+├── Instrumentar endpoints REST
+└── Instrumentar middleware
+
+app/chat.py
+├── Métricas de WebSocket
+├── Métricas de mensagens
+└── Métricas de execução
+
+app/llm_router.py
+├── Métricas por provider
+├── Latência
+└── Tokens
+
+app/cache.py
+├── Métricas de hit/miss
+└── Por tipo de cache
+```
+
+**Implementação com prometheus-fastapi-instrumentator**:
+```python
+from prometheus_fastapi_instrumentator import Instrumentator
+from prometheus_client import Counter, Histogram, Gauge
+
+# Métricas customizadas
+llm_requests = Counter(
+    "forex_llm_requests_total",
+    "Total LLM requests",
+    ["provider", "status"]
+)
+
+llm_latency = Histogram(
+    "forex_llm_latency_seconds",
+    "LLM request latency",
+    ["provider"],
+    buckets=[0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0]
+)
+
+# Auto-instrumentação
+Instrumentator().instrument(app).expose(app)
+```
+
+---
+
+#### RF-02: Dashboard de Observabilidade
+**Prioridade**: Média
+
+Dashboard Grafana com visão operacional do sistema.
+
+**Painéis Requeridos**:
+1. **Overview**: Requests/s, latência P95, erros
+2. **LLM**: Uso por provider, fallbacks, tokens
+3. **Cache**: Hit rate, tamanho
+4. **Chat**: Conexões ativas, mensagens/s
+5. **RAG**: Documentos, buscas, latência
+
+**Critérios de Aceitação**:
+- [ ] Dashboard JSON exportável
+- [ ] Alertas configurados para métricas críticas
+- [ ] Documentação de uso do dashboard
+
+**Arquivos a Criar**:
+```
+infra/grafana/
+├── dashboards/
+│   └── forex-advisor.json
+└── provisioning/
+    ├── dashboards.yaml
+    └── datasources.yaml
+
+docker-compose.monitoring.yml
+├── Prometheus
+├── Grafana
+└── Configuração
+```
+
+---
+
+#### RF-03: Testes E2E
+**Prioridade**: Alta
+**Débito**: DT-F4
+
+Cobertura de testes end-to-end para fluxos críticos.
+
+**Fluxos a Testar**:
+
+| Fluxo | Descrição | Prioridade |
+|-------|-----------|------------|
+| F1 | Carregar página de insights | Alta |
+| F2 | Refresh de dados | Alta |
+| F3 | Conectar ao chat | Alta |
+| F4 | Enviar mensagem e receber resposta | Alta |
+| F5 | Execução de código no chat | Média |
+| F6 | Reconexão após desconexão | Alta |
+| F7 | Persistência de chat (reload) | Média |
+| F8 | Estados de erro da API | Alta |
+| F9 | Rate limiting feedback | Baixa |
+
+**Critérios de Aceitação**:
+- [ ] >80% dos fluxos críticos cobertos
+- [ ] Testes rodam em CI (GitHub Actions)
+- [ ] Testes paralelos para performance
+- [ ] Screenshots de falhas para debug
+- [ ] Relatório de cobertura
+
+**Arquivos a Criar**:
+```
+frontend/
+├── e2e/
+│   ├── insights.spec.ts
+│   ├── chat.spec.ts
+│   ├── reconnection.spec.ts
+│   └── fixtures/
+│       └── mock-api.ts
+├── playwright.config.ts
+└── package.json (scripts)
+
+backend/
+└── tests/
+    └── e2e/
+        └── test_full_flow.py
+```
+
+**Implementação Playwright**:
+```typescript
+// e2e/chat.spec.ts
+import { test, expect } from '@playwright/test';
+
+test.describe('Chat Flow', () => {
+  test('should connect and send message', async ({ page }) => {
+    await page.goto('/insights');
+
+    // Verificar conexão
+    await expect(page.locator('[data-testid="connection-status"]'))
+      .toHaveText('Conectado');
+
+    // Enviar mensagem
+    await page.fill('[data-testid="chat-input"]', 'Qual o preço atual?');
+    await page.click('[data-testid="chat-send"]');
+
+    // Aguardar resposta
+    await expect(page.locator('[data-testid="assistant-message"]').last())
+      .toBeVisible({ timeout: 30000 });
+  });
+});
+```
+
+---
+
+#### RF-04: CI/CD Pipeline
+**Prioridade**: Alta
+
+Pipeline automatizado para build, test e deploy.
+
+**Stages do Pipeline**:
+```
+┌─────────┐   ┌─────────┐   ┌─────────┐   ┌─────────┐   ┌─────────┐
+│  Lint   │──▶│  Test   │──▶│  Build  │──▶│  E2E    │──▶│ Deploy  │
+│         │   │ (unit)  │   │ (Docker)│   │ (stage) │   │ (prod)  │
+└─────────┘   └─────────┘   └─────────┘   └─────────┘   └─────────┘
+```
+
+**Critérios de Aceitação**:
+- [ ] Lint: ESLint (frontend) + Ruff (backend)
+- [ ] Tests: Pytest + Vitest
+- [ ] Build: Docker multi-stage
+- [ ] E2E: Playwright contra staging
+- [ ] Deploy: Manual trigger para produção
+- [ ] Notificações de falha
+
+**Arquivos a Criar**:
+```
+.github/workflows/
+├── ci.yml (lint + test + build)
+├── e2e.yml (testes E2E)
+└── deploy.yml (deploy manual)
+
+backend/
+├── pyproject.toml (ruff config)
+└── Makefile (comandos)
+
+frontend/
+├── .eslintrc.cjs
+└── vitest.config.ts
+```
+
+**GitHub Actions CI**:
+```yaml
+# .github/workflows/ci.yml
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Lint
+        run: ruff check app/
+      - name: Test
+        run: pytest tests/ -v --cov=app
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ../forex-advisor-front/prototipo
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Build
+        run: npm run build
+```
+
+---
+
+#### RF-05: Documentação Completa da API
+**Prioridade**: Média
+
+Documentação OpenAPI enriquecida com exemplos e guias.
+
+**Critérios de Aceitação**:
+- [ ] Todos os endpoints documentados
+- [ ] Exemplos de request/response
+- [ ] Códigos de erro documentados
+- [ ] Guia de autenticação (se aplicável)
+- [ ] Changelog de API versionado
+- [ ] Exportável para Postman/Insomnia
+
+**Arquivos a Modificar**:
+```
+app/main.py
+├── Tags organizadas
+├── Descriptions detalhadas
+└── Response examples
+
+app/models.py
+├── Field descriptions
+└── Examples
+
+docs/
+├── API.md (guia de uso)
+├── ERRORS.md (códigos de erro)
+└── postman/
+    └── forex-advisor.json
+```
+
+---
+
+#### RF-06: Alinhamento API Frontend-Backend
+**Prioridade**: Média
+**Débitos**: DT-F3, DT-B8
+
+Mover transformações do frontend para o backend e expor campos faltantes.
+
+**Mudanças**:
+
+1. **Backend**: Expor `bollinger_middle` na API
+2. **Backend**: Adicionar endpoint para positives/risks pré-calculados
+3. **Frontend**: Consumir dados transformados do backend
+4. **Frontend**: Remover lógica duplicada de `transforms.ts`
+
+**Critérios de Aceitação**:
+- [ ] `bollinger_middle` incluído em `IndicatorsResponse`
+- [ ] Novo endpoint ou campo com positives/risks
+- [ ] Frontend simplificado
+- [ ] Testes atualizados
+
+**Opção A: Enriquecer Response Existente**:
+```python
+# app/models.py
+class InsightResponse(BaseModel):
+    # ... campos existentes ...
+    positives: list[PositiveItem] = Field(
+        ..., description="Pontos positivos identificados"
+    )
+    risks: list[RiskItem] = Field(
+        ..., description="Riscos identificados"
+    )
+    sentiment_summary: str = Field(
+        ..., description="Resumo do sentimento"
+    )
+```
+
+**Opção B: Novo Endpoint**:
+```
+GET /api/v1/forex/usdbrl/ui
+└── Response otimizada para frontend
+    ├── tldr
+    ├── positives
+    ├── risks
+    ├── sentiment
+    └── indicators (com bollinger_middle)
+```
+
+---
+
+### Requisitos Não Funcionais
+
+#### RNF-01: Performance
+- Latência P95 < 2s (cache miss)
+- Latência P95 < 50ms (cache hit)
+- Dashboard carrega em < 3s
+
+#### RNF-02: Disponibilidade
+- 99.5% uptime em staging por 7 dias antes de release
+- Zero downtime deploys
+
+#### RNF-03: Qualidade
+- Cobertura de testes unitários > 80%
+- Cobertura de fluxos E2E > 80%
+- Zero vulnerabilidades críticas (Snyk/Dependabot)
+
+#### RNF-04: Operabilidade
+- Logs estruturados (JSON)
+- Trace ID em todas as requests
+- Runbooks para incidentes comuns
+
+---
+
+## Abordagem Técnica
+
+### Arquitetura v1.0
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Frontend (React + Vite)                                    │
+│  ├── Testes E2E (Playwright)                               │
+│  ├── Consumo simplificado da API                           │
+│  └── CI/CD integrado                                        │
+└─────────────────────┬───────────────────────────────────────┘
+                      │
+                      ▼
+┌─────────────────────────────────────────────────────────────┐
+│  Backend (FastAPI)                                          │
+│  ├── /metrics (Prometheus)                                  │
+│  ├── Logs estruturados                                      │
+│  ├── API docs enriquecida                                   │
+│  └── Testes completos                                       │
+└─────────────────────┬───────────────────────────────────────┘
+                      │
+    ┌─────────────────┼─────────────────┐
+    ▼                 ▼                 ▼
+┌────────┐     ┌───────────┐     ┌───────────┐
+│Prometheus│    │  Grafana  │     │  GitHub   │
+│         │◀───│ Dashboard │     │  Actions  │
+└────────┘     └───────────┘     └───────────┘
+```
+
+### Stack de Observabilidade
+
+| Componente | Tecnologia | Propósito |
+|------------|------------|-----------|
+| Métricas | Prometheus | Coleta de métricas |
+| Dashboard | Grafana | Visualização |
+| Logs | Estruturados (JSON) | Debugging |
+| Traces | (futuro: OpenTelemetry) | Distributed tracing |
+
+### Stack de Testes
+
+| Tipo | Tecnologia | Escopo |
+|------|------------|--------|
+| Unit (Backend) | Pytest | Lógica de negócio |
+| Unit (Frontend) | Vitest | Componentes, hooks |
+| E2E | Playwright | Fluxos completos |
+| Load | (futuro: k6) | Performance |
+
+---
+
+## Fases de Implementação
+
+### Fase 1: Métricas Prometheus
+**Tarefas**:
+- [ ] 1.1 Instalar `prometheus-fastapi-instrumentator`
+- [ ] 1.2 Criar `app/metrics.py` com métricas customizadas
+- [ ] 1.3 Instrumentar endpoints REST
+- [ ] 1.4 Instrumentar LLM router
+- [ ] 1.5 Instrumentar cache
+- [ ] 1.6 Instrumentar WebSocket/chat
+- [ ] 1.7 Documentar métricas
+- [ ] 1.8 Commit: "feat: prometheus metrics instrumentation"
+
+### Fase 2: Dashboard Grafana
+**Tarefas**:
+- [ ] 2.1 Criar `docker-compose.monitoring.yml`
+- [ ] 2.2 Configurar Prometheus scrape
+- [ ] 2.3 Criar dashboard JSON
+- [ ] 2.4 Configurar alertas básicos
+- [ ] 2.5 Documentar uso do dashboard
+- [ ] 2.6 Commit: "feat: grafana dashboard for monitoring"
+
+### Fase 3: Testes E2E
+**Tarefas**:
+- [ ] 3.1 Instalar Playwright no frontend
+- [ ] 3.2 Configurar `playwright.config.ts`
+- [ ] 3.3 Criar testes para insights page
+- [ ] 3.4 Criar testes para chat flow
+- [ ] 3.5 Criar testes para reconexão
+- [ ] 3.6 Configurar CI para rodar E2E
+- [ ] 3.7 Commit: "test: e2e tests with playwright"
+
+### Fase 4: CI/CD Pipeline
+**Tarefas**:
+- [ ] 4.1 Criar `.github/workflows/ci.yml`
+- [ ] 4.2 Configurar lint (Ruff + ESLint)
+- [ ] 4.3 Configurar testes unitários
+- [ ] 4.4 Configurar build Docker
+- [ ] 4.5 Criar workflow E2E separado
+- [ ] 4.6 Configurar deploy workflow
+- [ ] 4.7 Commit: "ci: github actions pipeline"
+
+### Fase 5: Documentação API
+**Tarefas**:
+- [ ] 5.1 Enriquecer docstrings nos endpoints
+- [ ] 5.2 Adicionar examples nos models Pydantic
+- [ ] 5.3 Criar guia de uso da API
+- [ ] 5.4 Documentar códigos de erro
+- [ ] 5.5 Exportar collection Postman
+- [ ] 5.6 Commit: "docs: comprehensive API documentation"
+
+### Fase 6: Alinhamento Frontend-Backend
+**Tarefas**:
+- [ ] 6.1 Expor `bollinger_middle` na API
+- [ ] 6.2 Decidir: enriquecer response ou novo endpoint
+- [ ] 6.3 Implementar positives/risks no backend
+- [ ] 6.4 Atualizar frontend para consumir novos dados
+- [ ] 6.5 Remover `transforms.ts` redundante
+- [ ] 6.6 Atualizar testes
+- [ ] 6.7 Commit: "refactor: align frontend-backend data contract"
+
+### Fase 7: Validação e Release
+**Tarefas**:
+- [ ] 7.1 Rodar todos os testes
+- [ ] 7.2 Deploy em staging
+- [ ] 7.3 Monitorar métricas por 7 dias
+- [ ] 7.4 Validar 99.5% uptime
+- [ ] 7.5 Code freeze e review
+- [ ] 7.6 Atualizar CHANGELOG
+- [ ] 7.7 Tag: v1.0.0
+
+---
+
+## Dependências
+
+### Internas
+- v0.4.0 deve estar completa e estável
+
+### Externas
+- Prometheus + Grafana (Docker ou cloud)
+- GitHub Actions (já disponível)
+- Playwright (npm install)
+
+### Bloqueios
+| Bloqueio | Impacto | Mitigação |
+|----------|---------|-----------|
+| Infra Prometheus/Grafana | Sem métricas | Docker local primeiro |
+| Playwright CI lento | CI demorado | Testes paralelos, sharding |
+
+---
+
+## Riscos e Mitigações
+
+| Risco | Probabilidade | Impacto | Mitigação |
+|-------|---------------|---------|-----------|
+| Métricas high cardinality | Média | Alto | Limitar labels, review |
+| E2E flaky tests | Alta | Médio | Retry, waits explícitos |
+| CI timeout | Média | Baixo | Otimizar, cache |
+| Dashboard complexo | Baixa | Baixo | Começar simples |
+
+---
+
+## Critérios de Aceitação da Release
+
+### Checklist de Release v1.0.0
+
+**Observabilidade**:
+- [ ] Métricas Prometheus exportadas
+- [ ] Dashboard Grafana funcional
+- [ ] Alertas configurados
+
+**Qualidade**:
+- [ ] Cobertura unitária > 80%
+- [ ] Testes E2E passando
+- [ ] Zero vulnerabilidades críticas
+
+**CI/CD**:
+- [ ] Pipeline CI completo
+- [ ] E2E no CI
+- [ ] Deploy automatizado para staging
+
+**Documentação**:
+- [ ] API docs completa
+- [ ] Runbooks operacionais
+- [ ] CHANGELOG atualizado
+
+**Estabilidade**:
+- [ ] 7 dias em staging sem incidentes
+- [ ] 99.5% uptime comprovado
+
+---
+
+## Métricas de Sucesso
+
+| Métrica | Baseline (v0.4) | Target (v1.0) |
+|---------|-----------------|---------------|
+| Cobertura de testes | ~60% | > 80% |
+| Fluxos E2E cobertos | 0% | > 80% |
+| Métricas disponíveis | 0 | 12+ |
+| Uptime | N/A | 99.5% |
+| MTTR (tempo de recuperação) | N/A | < 30min |
+
+---
+
+## Referências
+
+- [Roadmap Completo](ROADMAP-COMPLETE.md)
+- [SPEC-v0.4](SPEC-v0.4.md)
+- [prometheus-fastapi-instrumentator](https://github.com/trallnag/prometheus-fastapi-instrumentator)
+- [Playwright Docs](https://playwright.dev/)
+- [GitHub Actions Docs](https://docs.github.com/en/actions)
+
+---
+
+## Histórico
+
+| Data | Versão | Autor | Mudanças |
+|------|--------|-------|----------|
+| 2026-01-23 | 1.0 | Claude | Criação inicial |

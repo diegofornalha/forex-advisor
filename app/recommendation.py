@@ -14,30 +14,20 @@ from .models import ClassificationResult, MarketClassification, TechnicalIndicat
 _executor = ThreadPoolExecutor(max_workers=2)
 
 
-async def fetch_ohlc(
-    symbol: str = None,
-    period: str = None,
-) -> pd.DataFrame:
+async def fetch_ohlc() -> pd.DataFrame:
     """Fetch OHLC data via yfinance.
-
-    Args:
-        symbol: Asset symbol (default: settings.symbol)
-        period: Data period (default: settings.period)
 
     Returns:
         DataFrame with Open, High, Low, Close, Volume columns
     """
-    symbol = symbol or settings.symbol
-    period = period or settings.period
-
     loop = asyncio.get_event_loop()
     df = await loop.run_in_executor(
         _executor,
-        lambda: yf.download(symbol, period=period, progress=False),
+        lambda: yf.download(settings.symbol, period=settings.period, progress=False),
     )
 
     if df.empty:
-        raise ValueError(f"Could not fetch data for {symbol}")
+        raise ValueError(f"Could not fetch data for {settings.symbol}")
 
     return df
 
@@ -186,19 +176,12 @@ def classify(indicators: TechnicalIndicators) -> ClassificationResult:
     )
 
 
-async def get_classification(
-    symbol: str = None,
-    period: str = None,
-) -> ClassificationResult:
+async def get_classification() -> ClassificationResult:
     """Full pipeline: fetch data, calculate indicators and classify.
-
-    Args:
-        symbol: Asset symbol
-        period: Data period
 
     Returns:
         ClassificationResult with full analysis
     """
-    df = await fetch_ohlc(symbol, period)
+    df = await fetch_ohlc()
     indicators = calculate_indicators(df)
     return classify(indicators)

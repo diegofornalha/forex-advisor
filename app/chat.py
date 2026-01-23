@@ -303,7 +303,6 @@ async def generate_response_stream(
         full_response = ""
 
         response = await llm_router.acompletion(
-            model="claude-haiku",
             messages=messages,
             max_tokens=settings.llm_max_tokens,
             stream=True,

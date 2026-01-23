@@ -1,4 +1,4 @@
-"""Simple RAG SDK - Ingest, Search, Query."""
+"""Simple RAG SDK - Ingest and Search."""
 
 import hashlib
 from dataclasses import dataclass
@@ -19,18 +19,18 @@ class SearchResult:
 
 
 class SimpleRAG:
-    """RAG simplificado: ingest + search + query.
+    """RAG simplificado: ingest + search.
 
     Exemplo:
         >>> rag = SimpleRAG("rag.db")
         >>> await rag.add_text("Dolar sobe com tensoes", source="news")
         >>> results = await rag.search("cambio dolar")
-        >>> answer = await rag.query("Como esta o dolar?")
     """
 
-    def __init__(self, db_path: str = "rag.db", embedding_model: str = "BAAI/bge-small-en-v1.5"):
+    EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
+
+    def __init__(self, db_path: str = "rag.db"):
         self.db_path = Path(db_path)
-        self.embedding_model_name = embedding_model
         self._model: TextEmbedding | None = None
         self._ensure_database()
 
@@ -38,7 +38,7 @@ class SimpleRAG:
     def model(self) -> TextEmbedding:
         """Lazy load do modelo de embedding."""
         if self._model is None:
-            self._model = TextEmbedding(self.embedding_model_name)
+            self._model = TextEmbedding(self.EMBEDDING_MODEL)
         return self._model
 
     def _get_connection(self) -> apsw.Connection:
@@ -159,49 +159,6 @@ class SimpleRAG:
             return results
         finally:
             conn.close()
-
-    async def query(self, question: str, top_k: int = 3) -> str:
-        """Pergunta com RAG usando Claude.
-
-        Args:
-            question: Pergunta
-            top_k: Documentos para contexto
-
-        Returns:
-            Resposta do Claude
-        """
-        import anthropic
-
-        # Busca contexto
-        results = await self.search(question, top_k=top_k)
-
-        if not results:
-            return "Nao encontrei informacoes relevantes."
-
-        # Monta contexto
-        context = "\n\n".join([
-            f"[{r.source}]: {r.content}" for r in results
-        ])
-
-        # Chama Claude
-        client = anthropic.Anthropic()
-        message = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=1024,
-            messages=[{
-                "role": "user",
-                "content": f"""Baseado no contexto abaixo, responda a pergunta.
-
-CONTEXTO:
-{context}
-
-PERGUNTA: {question}
-
-Responda de forma clara e concisa. Se nao houver informacao suficiente, diga."""
-            }]
-        )
-
-        return message.content[0].text if message.content else ""
 
     async def clear(self) -> int:
         """Remove todos os documentos.

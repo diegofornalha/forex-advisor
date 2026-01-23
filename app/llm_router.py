@@ -1,7 +1,4 @@
-"""LLM client for POC - Minimax only.
-
-v1: Adicionar LiteLLM Router com fallbacks (Vertex AI, Anthropic)
-"""
+"""LLM client - Minimax."""
 
 import logging
 from typing import Any
@@ -62,7 +59,7 @@ def get_router():
     Returns mock router that uses call_llm internally.
     """
     class MinimaxRouter:
-        async def acompletion(self, model: str, messages: list, max_tokens: int, stream: bool = False):
+        async def acompletion(self, messages: list, max_tokens: int, stream: bool = False):
             return await acompletion(
                 model=settings.minimax_model,
                 messages=messages,

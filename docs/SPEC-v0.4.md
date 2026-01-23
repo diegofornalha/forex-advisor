@@ -1,0 +1,658 @@
+# Especificação: Forex Advisor v0.4
+
+> Limpeza de Débitos Técnicos do Backend - Resiliência e Segurança
+
+## Metadados
+
+| Campo | Valor |
+|-------|-------|
+| **Versão** | 0.4.0 |
+| **Tipo** | Manutenção / Infraestrutura |
+| **Prioridade** | Crítica |
+| **Escopo** | Backend |
+| **Pré-requisito** | v0.3.0 |
+| **Bloqueia** | v1.0.0 |
+
+## Visão Geral
+
+A v0.4 resolve os débitos técnicos críticos do backend, especialmente o **single point of failure** do LLM (apenas Minimax ativo). Esta versão implementa fallbacks de LLM, circuit breaker, rate limiting e automação de processos.
+
+### Objetivos
+
+1. **Resiliência**: Sistema funciona mesmo com falha de providers
+2. **Segurança**: Rate limiting contra abuso
+3. **Automação**: News ingestion automático
+4. **Observabilidade**: Health checks completos
+
+---
+
+## Requisitos
+
+### Requisitos Funcionais
+
+#### RF-01: Implementar Fallback Chain de LLM
+**Prioridade**: CRÍTICA
+**Débitos**: DT-B1, DT-B2
+
+O sistema atualmente depende exclusivamente do Minimax. Se ele falhar, todo o chat para de funcionar.
+
+**Cadeia de Fallback**:
+```
+Minimax (primary) → Vertex AI (secondary) → Anthropic Claude (tertiary)
+```
+
+**Critérios de Aceitação**:
+- [ ] LiteLLM configurado com fallback chain
+- [ ] Fallback automático em caso de erro/timeout
+- [ ] Log indica qual provider respondeu
+- [ ] Métricas de uso por provider
+- [ ] Teste de fallback manual disponível
+
+**Arquivos a Modificar**:
+```
+app/llm_router.py
+├── Configurar fallbacks no LiteLLM
+├── Adicionar logging de provider usado
+└── Método para forçar fallback (teste)
+
+app/config.py
+├── VERTEX_AI_PROJECT
+├── VERTEX_AI_LOCATION
+├── ANTHROPIC_API_KEY
+├── LLM_FALLBACK_ENABLED
+└── LLM_TIMEOUT_PER_PROVIDER
+```
+
+**Implementação LiteLLM**:
+```python
+from litellm import Router
+
+router = Router(
+    model_list=[
+        {
+            "model_name": "primary",
+            "litellm_params": {
+                "model": "minimax/minimax-m2",
+                "api_key": settings.minimax_token,
+            }
+        },
+        {
+            "model_name": "secondary",
+            "litellm_params": {
+                "model": "vertex_ai/gemini-pro",
+                "vertex_project": settings.vertex_project,
+                "vertex_location": settings.vertex_location,
+            }
+        },
+        {
+            "model_name": "tertiary",
+            "litellm_params": {
+                "model": "claude-3-haiku-20240307",
+                "api_key": settings.anthropic_api_key,
+            }
+        }
+    ],
+    fallbacks=[
+        {"primary": ["secondary"]},
+        {"secondary": ["tertiary"]},
+    ],
+    set_verbose=True,
+)
+```
+
+---
+
+#### RF-02: Implementar Circuit Breaker
+**Prioridade**: Alta
+**Débito**: DT-B7
+
+Prevenir cascata de falhas quando um provider está instável.
+
+**Critérios de Aceitação**:
+- [ ] Circuit breaker por provider
+- [ ] Estados: CLOSED (normal), OPEN (bloqueado), HALF_OPEN (testando)
+- [ ] Abre após 3 falhas consecutivas
+- [ ] Tenta reabrir após 30 segundos
+- [ ] Logging de mudanças de estado
+- [ ] Endpoint para visualizar estado dos circuits
+
+**Arquivos a Criar/Modificar**:
+```
+app/circuit_breaker.py (NOVO)
+├── class CircuitBreaker
+├── Estados: CLOSED, OPEN, HALF_OPEN
+├── Thresholds configuráveis
+└── Decorator @circuit_breaker
+
+app/llm_router.py
+├── Integrar circuit breaker
+└── Expor estado via método
+```
+
+**Implementação Sugerida**:
+```python
+from enum import Enum
+from datetime import datetime, timedelta
+from functools import wraps
+
+class CircuitState(Enum):
+    CLOSED = "closed"
+    OPEN = "open"
+    HALF_OPEN = "half_open"
+
+class CircuitBreaker:
+    def __init__(
+        self,
+        name: str,
+        failure_threshold: int = 3,
+        recovery_timeout: int = 30,
+    ):
+        self.name = name
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout = timedelta(seconds=recovery_timeout)
+        self.failures = 0
+        self.state = CircuitState.CLOSED
+        self.last_failure_time = None
+
+    def can_execute(self) -> bool:
+        if self.state == CircuitState.CLOSED:
+            return True
+        if self.state == CircuitState.OPEN:
+            if datetime.now() - self.last_failure_time > self.recovery_timeout:
+                self.state = CircuitState.HALF_OPEN
+                return True
+            return False
+        return True  # HALF_OPEN
+
+    def record_success(self):
+        self.failures = 0
+        self.state = CircuitState.CLOSED
+
+    def record_failure(self):
+        self.failures += 1
+        self.last_failure_time = datetime.now()
+        if self.failures >= self.failure_threshold:
+            self.state = CircuitState.OPEN
+```
+
+---
+
+#### RF-03: Health Check Completo
+**Prioridade**: Alta
+**Débito**: DT-B9
+
+O health check atual não reporta o estado real dos providers de LLM.
+
+**Critérios de Aceitação**:
+- [ ] Status de cada provider de LLM (available/unavailable/degraded)
+- [ ] Status do cache Redis
+- [ ] Status do RAG (sqlite-vec)
+- [ ] Status do E2B sandbox
+- [ ] Tempo desde última verificação
+- [ ] Endpoint separado para health detalhado
+
+**Arquivos a Modificar**:
+```
+app/main.py
+├── GET /health (básico, para load balancers)
+└── GET /health/detailed (completo, para debugging)
+
+app/health.py (NOVO)
+├── check_llm_providers()
+├── check_redis()
+├── check_rag()
+├── check_e2b()
+└── aggregate_health()
+```
+
+**Response do Health Detalhado**:
+```json
+{
+  "status": "healthy",
+  "version": "0.4.0",
+  "timestamp": "2026-01-23T10:30:00Z",
+  "components": {
+    "llm": {
+      "status": "healthy",
+      "providers": {
+        "minimax": {"status": "available", "latency_ms": 150},
+        "vertex_ai": {"status": "available", "latency_ms": 200},
+        "anthropic": {"status": "unavailable", "error": "API key not configured"}
+      },
+      "active_provider": "minimax"
+    },
+    "cache": {
+      "status": "healthy",
+      "type": "redis",
+      "connected": true
+    },
+    "rag": {
+      "status": "healthy",
+      "documents": 150,
+      "last_ingestion": "2026-01-23T08:00:00Z"
+    },
+    "sandbox": {
+      "status": "healthy",
+      "available": true
+    }
+  },
+  "circuit_breakers": {
+    "minimax": "closed",
+    "vertex_ai": "closed",
+    "anthropic": "open"
+  }
+}
+```
+
+---
+
+#### RF-04: Implementar Rate Limiting
+**Prioridade**: Alta
+**Débito**: DT-B4
+
+Proteger a API contra abuso e controlar custos de LLM.
+
+**Critérios de Aceitação**:
+- [ ] Rate limit por IP
+- [ ] Rate limit por session (WebSocket)
+- [ ] Limite: 100 requests/minuto por IP
+- [ ] Limite: 20 mensagens/minuto por sessão de chat
+- [ ] Header `X-RateLimit-*` nas respostas
+- [ ] Response 429 quando excede limite
+- [ ] Whitelist de IPs para desenvolvimento
+
+**Arquivos a Criar/Modificar**:
+```
+app/rate_limiter.py (NOVO)
+├── class RateLimiter
+├── Armazenamento em Redis (ou memory)
+├── Middleware para FastAPI
+└── Decorator para WebSocket
+
+app/main.py
+├── Adicionar middleware de rate limit
+└── Configurar limites por rota
+
+app/chat.py
+├── Rate limit por sessão
+└── Mensagem amigável quando limitado
+
+app/config.py
+├── RATE_LIMIT_REQUESTS_PER_MINUTE
+├── RATE_LIMIT_CHAT_MESSAGES_PER_MINUTE
+└── RATE_LIMIT_WHITELIST_IPS
+```
+
+**Implementação com slowapi**:
+```python
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
+limiter = Limiter(
+    key_func=get_remote_address,
+    storage_uri=settings.redis_url,
+)
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+@app.get("/api/v1/forex/usdbrl")
+@limiter.limit("100/minute")
+async def get_insight(request: Request):
+    ...
+```
+
+---
+
+#### RF-05: Scheduler para News Ingestion
+**Prioridade**: Média
+**Débito**: DT-B5
+
+Atualmente a ingestão de notícias é manual via CLI.
+
+**Critérios de Aceitação**:
+- [ ] Scheduler roda a cada 2 horas
+- [ ] Ingestão não bloqueia a API
+- [ ] Logging de cada execução
+- [ ] Métricas: docs ingeridos, duplicados, erros
+- [ ] Endpoint para forçar ingestão manual
+- [ ] Cleanup automático de docs > 7 dias
+
+**Arquivos a Criar/Modificar**:
+```
+app/scheduler.py (NOVO)
+├── Configuração APScheduler
+├── Job: ingest_news (a cada 2h)
+├── Job: cleanup_old_docs (diário)
+└── Integração com lifecycle FastAPI
+
+app/news_ingestion.py
+├── Adicionar cleanup_old_documents()
+└── Retornar estatísticas estruturadas
+
+app/main.py
+├── Iniciar scheduler no startup
+├── Parar scheduler no shutdown
+└── POST /api/v1/admin/ingest-news (manual trigger)
+```
+
+**Implementação APScheduler**:
+```python
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.interval import IntervalTrigger
+
+scheduler = AsyncIOScheduler()
+
+@app.on_event("startup")
+async def start_scheduler():
+    scheduler.add_job(
+        ingest_news_job,
+        trigger=IntervalTrigger(hours=2),
+        id="news_ingestion",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        cleanup_old_docs_job,
+        trigger=IntervalTrigger(days=1),
+        id="rag_cleanup",
+        replace_existing=True,
+    )
+    scheduler.start()
+
+@app.on_event("shutdown")
+async def stop_scheduler():
+    scheduler.shutdown()
+```
+
+---
+
+### Requisitos Não Funcionais
+
+#### RNF-01: Resiliência
+- Fallback deve ocorrer em < 5s após falha do provider primary
+- Sistema deve funcionar com 2 de 3 providers offline
+- Circuit breaker não deve ter falsos positivos (>99% precisão)
+
+#### RNF-02: Performance
+- Health check < 500ms
+- Rate limiter overhead < 5ms por request
+- Scheduler não deve impactar latência da API
+
+#### RNF-03: Segurança
+- API keys nunca expostas em logs ou responses
+- Rate limit resistant a bypass por headers
+- Admin endpoints protegidos (IP whitelist ou auth)
+
+#### RNF-04: Observabilidade
+- Todos os fallbacks logados com severity WARNING
+- Circuit breaker changes logados com severity INFO
+- Rate limit hits logados com severity DEBUG
+
+---
+
+## Abordagem Técnica
+
+### Arquitetura de Mudanças
+
+```
+app/
+├── main.py                 [MODIFICAR]
+│   ├── Health endpoints
+│   ├── Rate limit middleware
+│   └── Scheduler lifecycle
+├── config.py               [MODIFICAR]
+│   ├── Vertex AI settings
+│   ├── Anthropic settings
+│   ├── Rate limit settings
+│   └── Scheduler settings
+├── llm_router.py           [MODIFICAR]
+│   ├── Fallback chain
+│   ├── Circuit breaker integration
+│   └── Provider metrics
+├── circuit_breaker.py      [CRIAR]
+│   └── CircuitBreaker class
+├── rate_limiter.py         [CRIAR]
+│   └── Rate limit logic
+├── health.py               [CRIAR]
+│   └── Health check logic
+├── scheduler.py            [CRIAR]
+│   └── APScheduler setup
+├── chat.py                 [MODIFICAR]
+│   └── Rate limit por sessão
+└── news_ingestion.py       [MODIFICAR]
+    └── Cleanup function
+```
+
+### Dependências Novas
+
+```
+# requirements.txt
+slowapi>=0.1.9           # Rate limiting
+apscheduler>=3.10.0      # Job scheduling
+```
+
+### Variáveis de Ambiente Novas
+
+```env
+# LLM Fallbacks
+VERTEX_AI_PROJECT=your-project-id
+VERTEX_AI_LOCATION=us-central1
+ANTHROPIC_API_KEY=sk-ant-...
+LLM_FALLBACK_ENABLED=true
+LLM_TIMEOUT_PER_PROVIDER=15
+
+# Circuit Breaker
+CIRCUIT_BREAKER_FAILURE_THRESHOLD=3
+CIRCUIT_BREAKER_RECOVERY_TIMEOUT=30
+
+# Rate Limiting
+RATE_LIMIT_ENABLED=true
+RATE_LIMIT_REQUESTS_PER_MINUTE=100
+RATE_LIMIT_CHAT_PER_MINUTE=20
+RATE_LIMIT_WHITELIST_IPS=127.0.0.1,::1
+
+# Scheduler
+SCHEDULER_ENABLED=true
+NEWS_INGESTION_INTERVAL_HOURS=2
+RAG_CLEANUP_DAYS=7
+```
+
+---
+
+## Fases de Implementação
+
+### Fase 1: Configuração de Providers
+**Tarefas**:
+- [ ] 1.1 Adicionar settings para Vertex AI em `config.py`
+- [ ] 1.2 Adicionar settings para Anthropic em `config.py`
+- [ ] 1.3 Atualizar `.env.example` com novas variáveis
+- [ ] 1.4 Documentar requisitos de cada provider
+- [ ] 1.5 Commit: "config: add Vertex AI and Anthropic settings"
+
+### Fase 2: Fallback Chain
+**Tarefas**:
+- [ ] 2.1 Refatorar `llm_router.py` para usar LiteLLM Router
+- [ ] 2.2 Configurar fallback chain: Minimax → Vertex → Anthropic
+- [ ] 2.3 Adicionar logging de provider usado
+- [ ] 2.4 Criar teste de fallback (`test_llm_fallback.py`)
+- [ ] 2.5 Testar com Minimax desabilitado
+- [ ] 2.6 Commit: "feat: implement LLM fallback chain"
+
+### Fase 3: Circuit Breaker
+**Tarefas**:
+- [ ] 3.1 Criar `app/circuit_breaker.py`
+- [ ] 3.2 Implementar estados e transições
+- [ ] 3.3 Integrar com `llm_router.py`
+- [ ] 3.4 Adicionar logging de mudanças de estado
+- [ ] 3.5 Criar testes unitários
+- [ ] 3.6 Commit: "feat: implement circuit breaker for LLM providers"
+
+### Fase 4: Health Check Completo
+**Tarefas**:
+- [ ] 4.1 Criar `app/health.py` com funções de verificação
+- [ ] 4.2 Implementar `GET /health` (básico)
+- [ ] 4.3 Implementar `GET /health/detailed` (completo)
+- [ ] 4.4 Incluir estado dos circuit breakers
+- [ ] 4.5 Criar testes para health endpoints
+- [ ] 4.6 Commit: "feat: comprehensive health check endpoints"
+
+### Fase 5: Rate Limiting
+**Tarefas**:
+- [ ] 5.1 Instalar `slowapi`
+- [ ] 5.2 Criar `app/rate_limiter.py`
+- [ ] 5.3 Adicionar middleware em `main.py`
+- [ ] 5.4 Implementar rate limit por sessão no chat
+- [ ] 5.5 Adicionar headers `X-RateLimit-*`
+- [ ] 5.6 Testar limites
+- [ ] 5.7 Commit: "feat: implement rate limiting"
+
+### Fase 6: Scheduler
+**Tarefas**:
+- [ ] 6.1 Instalar `apscheduler`
+- [ ] 6.2 Criar `app/scheduler.py`
+- [ ] 6.3 Integrar com lifecycle do FastAPI
+- [ ] 6.4 Adicionar job de news ingestion
+- [ ] 6.5 Adicionar job de RAG cleanup
+- [ ] 6.6 Implementar endpoint admin para trigger manual
+- [ ] 6.7 Commit: "feat: automated news ingestion scheduler"
+
+### Fase 7: Testes e Documentação
+**Tarefas**:
+- [ ] 7.1 Testes de integração para fallback
+- [ ] 7.2 Testes de rate limiting
+- [ ] 7.3 Atualizar README com novas features
+- [ ] 7.4 Documentar variáveis de ambiente
+- [ ] 7.5 Atualizar CHANGELOG
+- [ ] 7.6 Tag: v0.4.0
+
+---
+
+## Dependências
+
+### Internas
+- v0.3.0 deve estar completa
+
+### Externas
+- **Vertex AI**: Conta GCP com billing habilitado
+- **Anthropic**: API key válida
+- **Redis**: Para rate limiting distribuído (opcional, fallback memory)
+
+### Bloqueios
+| Bloqueio | Impacto | Mitigação |
+|----------|---------|-----------|
+| Sem conta Vertex AI | Fallback incompleto | Pular para Anthropic |
+| Sem API key Anthropic | Apenas 2 providers | Minimax + Vertex |
+| Redis offline | Rate limit degradado | Fallback para memory |
+
+---
+
+## Riscos e Mitigações
+
+| Risco | Probabilidade | Impacto | Mitigação |
+|-------|---------------|---------|-----------|
+| Custo alto com fallbacks | Média | Alto | Monitorar custos, alerts |
+| Rate limit muito restritivo | Média | Médio | Ajustar baseado em uso real |
+| Circuit breaker flapping | Baixa | Médio | Tune thresholds, hysteresis |
+| Scheduler conflita com requests | Baixa | Baixo | Background thread, async |
+| Vertex AI quota exceeded | Média | Médio | Fallback para Anthropic |
+
+---
+
+## Critérios de Aceitação da Release
+
+### Checklist de Release v0.4.0
+
+**Funcional**:
+- [ ] Fallback Minimax → Vertex AI funcionando
+- [ ] Fallback Vertex AI → Anthropic funcionando
+- [ ] Circuit breaker abrindo após 3 falhas
+- [ ] Health check reporta todos os providers
+- [ ] Rate limit bloqueando após 100 req/min
+- [ ] Scheduler executando a cada 2h
+- [ ] Cleanup de docs > 7 dias funcionando
+
+**Técnico**:
+- [ ] Testes de fallback passando
+- [ ] Testes de circuit breaker passando
+- [ ] Testes de rate limit passando
+- [ ] Build Docker funcional
+- [ ] Sem secrets em logs
+
+**Documentação**:
+- [ ] CHANGELOG atualizado
+- [ ] .env.example atualizado
+- [ ] README com seção de configuração
+
+---
+
+## Métricas de Sucesso
+
+| Métrica | Baseline (v0.3) | Target (v0.4) |
+|---------|-----------------|---------------|
+| Providers disponíveis | 1 | 3 |
+| Fallback success rate | N/A | > 95% |
+| Uptime com falha de 1 provider | 0% | 100% |
+| Rate limit bypass | N/A | 0% |
+| News freshness | Manual | < 2h |
+
+---
+
+## Testes de Validação
+
+### Teste 1: Fallback Chain
+```bash
+# Desabilitar Minimax temporariamente
+export MINIMAX_TOKEN=""
+
+# Fazer request
+curl http://localhost:8000/api/v1/forex/usdbrl
+
+# Verificar logs - deve usar Vertex AI
+# Response deve funcionar normalmente
+```
+
+### Teste 2: Circuit Breaker
+```bash
+# Simular 3 falhas consecutivas do Minimax
+# Circuit deve abrir
+# Próximo request deve ir direto para Vertex AI
+
+# Após 30s, circuit deve tentar HALF_OPEN
+# Se sucesso, volta para CLOSED
+```
+
+### Teste 3: Rate Limiting
+```bash
+# Fazer 101 requests em 1 minuto
+for i in {1..101}; do
+  curl -s http://localhost:8000/api/v1/forex/usdbrl -o /dev/null -w "%{http_code}\n"
+done
+
+# Request 101 deve retornar 429
+```
+
+### Teste 4: Health Check
+```bash
+curl http://localhost:8000/health/detailed | jq .
+
+# Deve mostrar status de todos os componentes
+```
+
+---
+
+## Referências
+
+- [Roadmap Completo](ROADMAP-COMPLETE.md)
+- [SPEC-v0.3](SPEC-v0.3.md)
+- [LiteLLM Fallbacks Docs](https://docs.litellm.ai/docs/routing)
+- [slowapi Docs](https://github.com/laurentS/slowapi)
+- [APScheduler Docs](https://apscheduler.readthedocs.io/)
+
+---
+
+## Histórico
+
+| Data | Versão | Autor | Mudanças |
+|------|--------|-------|----------|
+| 2026-01-23 | 1.0 | Claude | Criação inicial |
