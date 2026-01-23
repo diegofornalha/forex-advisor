@@ -141,11 +141,18 @@ def _prepare_code(code: str, data: dict[str, Any] | None) -> str:
     if not data:
         return code
 
-    # Serializar dados de forma segura e criar DataFrame df
-    data_setup = """import json
+    # Serializar dados usando base64 para evitar injection
+    import base64
+    import json
+
+    json_bytes = json.dumps(data, default=str).encode('utf-8')
+    b64_data = base64.b64encode(json_bytes).decode('ascii')
+
+    data_setup = f"""import json
+import base64
 import pandas as pd
 
-_injected_data = json.loads('''{json_data}''')
+_injected_data = json.loads(base64.b64decode("{b64_data}").decode('utf-8'))
 
 # Create DataFrame from OHLC data
 if 'ohlc_data' in _injected_data:
@@ -154,23 +161,9 @@ if 'ohlc_data' in _injected_data:
         df['Date'] = pd.to_datetime(df['Date'])
         df = df.sort_values('Date').reset_index(drop=True)
 
-""".format(json_data=_safe_json_dumps(data))
+"""
 
     return data_setup + code
-
-
-def _safe_json_dumps(data: Any) -> str:
-    """Safely serialize data to JSON string.
-
-    Args:
-        data: Data to serialize
-
-    Returns:
-        JSON string with escaped quotes
-    """
-    import json
-
-    return json.dumps(data, default=str).replace("'", "\\'")
 
 
 def close_sandbox() -> None:

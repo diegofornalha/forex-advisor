@@ -2,6 +2,17 @@
 
 > Documento mestre de evolução do projeto Forex Advisor da POC (v0.2) até a versão de produção (v2.0).
 
+## Status Atual: v0.4 ✅
+
+**Última atualização**: 2026-01-23
+
+| Versão | Status | Data |
+|--------|--------|------|
+| v0.2 | ✅ Concluída | 2026-01-22 |
+| v0.3 | ✅ Concluída | 2026-01-23 |
+| v0.4 | ✅ Concluída | 2026-01-23 |
+| v1.0 | ⏳ Próxima | - |
+
 ## Sumário
 
 - [Visão Geral](#visão-geral)
@@ -54,7 +65,7 @@ O Forex Advisor é um assistente de análise de câmbio USD/BRL que combina aná
 
 ---
 
-## Estado Atual (v0.2)
+## Estado Atual (v0.4)
 
 **Release Date**: 2026-01-23
 
@@ -64,59 +75,79 @@ O Forex Advisor é um assistente de análise de câmbio USD/BRL que combina aná
 |-----------|---------|--------|
 | **API** | Endpoint de análise completa | ✅ |
 | **API** | Endpoint apenas técnico | ✅ |
-| **API** | Health check | ✅ |
+| **API** | Health check expandido | ✅ |
+| **API** | Rate limiting (100 req/min) | ✅ v0.4 |
 | **Análise** | SMA 20/50 | ✅ |
 | **Análise** | RSI 14 períodos | ✅ |
 | **Análise** | Bollinger Bands | ✅ |
 | **Análise** | Classificação automática | ✅ |
 | **LLM** | Geração de insights | ✅ |
 | **LLM** | Validação de compliance | ✅ |
+| **LLM** | Fallback chain (Minimax → Vertex → Anthropic) | ✅ v0.4 |
+| **LLM** | Circuit breaker por provider | ✅ v0.4 |
 | **Chat** | WebSocket streaming | ✅ |
 | **Chat** | Execução de código (E2B) | ✅ |
+| **Chat** | Retry automático WebSocket | ✅ v0.3 |
+| **Chat** | Persistência localStorage | ✅ v0.3 |
 | **RAG** | Busca semântica de notícias | ✅ |
 | **RAG** | Pipeline de ingestão | ✅ |
+| **RAG** | Connection pool SQLite | ✅ v0.4 |
+| **RAG** | Preload de embedding model | ✅ v0.4 |
 | **Cache** | Redis + memory fallback | ✅ |
-| **Testes** | 38 testes unitários | ✅ |
+| **Cache** | Cache yfinance (5min TTL) | ✅ v0.4 |
+| **Segurança** | Validação UUID session_id | ✅ v0.4 |
+| **Segurança** | Limite mensagem WebSocket (10KB) | ✅ v0.4 |
+| **Segurança** | CORS restrito | ✅ v0.4 |
+| **Segurança** | Sanitização de erros (API keys) | ✅ v0.4 |
+| **Testes** | 79 testes automatizados | ✅ v0.4 |
 | **Frontend** | UI completa | ✅ |
 | **Frontend** | Tema dark | ✅ |
+| **Frontend** | Indicador status conexão | ✅ v0.3 |
 | **Frontend** | Mock data para dev | ✅ |
 
-### Débitos Técnicos Acumulados
+### Débitos Técnicos - Status
 
 ```
 FRONTEND (7 débitos):
-├── DT-F1: Supabase configurado mas não usado
-├── DT-F2: Recharts importado mas não usado
-├── DT-F3: Transformações manuais (positives/risks)
-├── DT-F4: Sem testes E2E
-├── DT-F5: Sem indicador de LLM ativo
-├── DT-F6: Sem retry automático no WebSocket
-└── DT-F7: Sem persistência de chat
+├── DT-F1: Supabase configurado mas não usado          ✅ RESOLVIDO v0.3
+├── DT-F2: Recharts importado mas não usado            ✅ Mantido (usado por shadcn)
+├── DT-F3: Transformações manuais (positives/risks)    ⏳ Pendente v1.0
+├── DT-F4: Sem testes E2E                              ⏳ Pendente v1.0
+├── DT-F5: Sem indicador de LLM ativo                  ⏳ Depende do backend
+├── DT-F6: Sem retry automático no WebSocket           ✅ JÁ EXISTIA
+└── DT-F7: Sem persistência de chat                    ✅ RESOLVIDO v0.3
 
 BACKEND (9 débitos):
-├── DT-B1: Fallbacks de LLM não implementados [CRÍTICO]
-├── DT-B2: Vertex AI/Anthropic só configurados [CRÍTICO]
-├── DT-B3: Sem métricas Prometheus
-├── DT-B4: Sem rate limiting
-├── DT-B5: News ingestion manual
-├── DT-B6: RAG cleanup não automático
-├── DT-B7: Circuit breaker não implementado
-├── DT-B8: bollinger_middle não exposto
-└── DT-B9: Health check incompleto
+├── DT-B1: Fallbacks de LLM não implementados          ✅ RESOLVIDO v0.4
+├── DT-B2: Vertex AI/Anthropic só configurados         ✅ RESOLVIDO v0.4
+├── DT-B3: Sem métricas Prometheus                     ⏳ Pendente v1.0
+├── DT-B4: Sem rate limiting                           ✅ RESOLVIDO v0.4
+├── DT-B5: News ingestion manual                       ⏳ Pendente v1.0
+├── DT-B6: RAG cleanup não automático                  ⏳ Pendente v1.0
+├── DT-B7: Circuit breaker não implementado            ✅ RESOLVIDO v0.4
+├── DT-B8: bollinger_middle não exposto                ⏳ Pendente v1.0
+└── DT-B9: Health check incompleto                     ✅ RESOLVIDO v0.4
 ```
+
+### Resumo de Débitos
+
+| Status | Quantidade |
+|--------|------------|
+| ✅ Resolvidos | 10 |
+| ⏳ Pendentes v1.0 | 6 |
 
 ---
 
 ## Roadmap de Versões
 
 ```
-v0.2 (ATUAL)     v0.3           v0.4           v1.0           v2.0           v3.0
+v0.2 ✅          v0.3 ✅        v0.4 ✅        v1.0           v2.0           v3.0
     │              │              │              │              │              │
     │  Frontend    │  Backend     │  Produção    │  Expansão    │  Agent       │
     │  Cleanup     │  Resiliência │  Ready       │              │  Mode        │
     │              │              │              │              │              │
     ├─────────────►├─────────────►├─────────────►├─────────────►├─────────────►│
-    │              │              │              │              │              │
+    │              │              │  (ATUAL)     │              │              │
     │ POC          │ Código       │ LLM          │ Métricas     │ EUR/BRL      │ Planejador
     │ funcional    │ limpo        │ resiliente   │ Testes E2E   │ BTC/BRL      │ Executor
     │ RAG          │ Retry WS     │ Circuit      │ CI/CD        │ Backtesting  │ Verificador
@@ -130,9 +161,9 @@ v0.2 (ATUAL)     v0.3           v0.4           v1.0           v2.0           v3.
 |--------|------|--------|---------------|
 | **v0.3** | Frontend | Limpeza de código morto, UX resiliente | v0.2 |
 | **v0.4** | Backend | LLM fallbacks, segurança básica | v0.3 |
-| **v1.0** | Produção | Observabilidade, testes, CI/CD | v0.4 |
+| **v1.0** | Produção | Observabilidade, CI/CD, Widget Remessa Online | v0.4 |
 | **v2.0** | Expansão | Multi-asset, features avançadas | v1.0 |
-| **v3.0** | Agent Mode | Planejador/Executor/Verificador | v2.0 |
+| **v3.0** | Agent Mode | Planejador/Executor/Verificador, E2B MCP Server | v2.0 |
 
 ---
 
@@ -218,33 +249,35 @@ graph LR
 
 ## Critérios de Promoção
 
-### v0.2 → v0.3
+### v0.2 → v0.3 ✅ CONCLUÍDO (2026-01-23)
 
-- [ ] Código Supabase removido
-- [ ] Imports não utilizados limpos
-- [ ] WebSocket com retry automático funcionando
-- [ ] Chat persiste em localStorage
-- [ ] Indicador de status de conexão visível
+- [x] Código Supabase removido
+- [x] Imports não utilizados limpos
+- [x] WebSocket com retry automático funcionando
+- [x] Chat persiste em localStorage
+- [x] Indicador de status de conexão visível
 
-### v0.3 → v0.4
+### v0.3 → v0.4 ✅ CONCLUÍDO (2026-01-23)
 
-- [ ] Todos os critérios v0.3 atendidos
-- [ ] Fallback para Vertex AI funcionando
-- [ ] Fallback para Anthropic funcionando
-- [ ] Circuit breaker ativo
-- [ ] Health check reporta status de todos os providers
-- [ ] Rate limiting ativo (100 req/min por IP)
-- [ ] News ingestion rodando via scheduler
+- [x] Todos os critérios v0.3 atendidos
+- [x] Fallback chain implementado (Minimax → Vertex AI → Anthropic)
+- [x] Circuit breaker ativo (3 falhas = open, 60s recovery)
+- [x] Health check reporta status de todos os providers
+- [x] Rate limiting ativo (100 req/min por IP)
+- [x] Sanitização de erros (API keys não expostas)
+- [x] 79 testes automatizados passando
+- [ ] ~~News ingestion rodando via scheduler~~ (adiado para v1.0)
 
-### v0.4 → v1.0
+### v0.4 → v1.0 ⏳ PRÓXIMA
 
-- [ ] Todos os critérios v0.4 atendidos
+- [x] Todos os critérios v0.4 atendidos
 - [ ] Métricas Prometheus exportadas
 - [ ] Dashboard básico funcional
 - [ ] Testes E2E passando (>80% cobertura de fluxos críticos)
 - [ ] Documentação OpenAPI completa
 - [ ] CI/CD pipeline funcional
 - [ ] 99.5% uptime em staging por 7 dias
+- [ ] News ingestion automática
 
 ### v1.0 → v2.0
 
@@ -261,11 +294,12 @@ Cada versão possui uma especificação detalhada em arquivo separado:
 
 | Versão | Arquivo | Descrição |
 |--------|---------|-----------|
-| v0.3 | [SPEC-v0.3.md](SPEC-v0.3.md) | Limpeza de débitos técnicos do frontend |
-| v0.4 | [SPEC-v0.4.md](SPEC-v0.4.md) | Limpeza de débitos técnicos do backend |
-| v1.0 | [SPEC-v1.0.md](SPEC-v1.0.md) | Estabilidade e preparação para produção |
-| v2.0 | [SPEC-v2.0.md](SPEC-v2.0.md) | Multi-asset e features avançadas |
-| v3.0 | [SPEC-v3.0.md](SPEC-v3.0.md) | Agent Mode - Planejador/Executor/Verificador |
+| v0.3 | [v0.3-frontend-cleanup.md](specs/v0.3-frontend-cleanup.md) | Limpeza de débitos técnicos do frontend |
+| v0.4 | [v0.4-backend-resiliente.md](specs/v0.4-backend-resiliente.md) | Limpeza de débitos técnicos do backend |
+| v1.0 | [v1.0-producao.md](specs/v1.0-producao.md) | Estabilidade e preparação para produção |
+| v1.0 | [v1.0-integracao-remessa-online.md](specs/v1.0-integracao-remessa-online.md) | Integração widget com Remessa Online |
+| v2.0 | [v2.0-multi-asset.md](specs/v2.0-multi-asset.md) | Multi-asset e features avançadas |
+| v3.0 | [v3.0-agent-mode.md](specs/v3.0-agent-mode.md) | Agent Mode - Planejador/Executor/Verificador |
 
 ---
 
@@ -296,6 +330,7 @@ Cada versão possui uma especificação detalhada em arquivo separado:
 | Data | Versão Doc | Autor | Mudanças |
 |------|------------|-------|----------|
 | 2026-01-23 | 1.0 | Claude | Criação inicial do roadmap completo |
+| 2026-01-23 | 2.0 | Claude | Atualização pós implementação v0.3 e v0.4: 79 testes, fallback chain, circuit breaker, rate limiting, localStorage |
 
 ---
 
@@ -303,7 +338,7 @@ Cada versão possui uma especificação detalhada em arquivo separado:
 
 - [CHANGELOG.md](../CHANGELOG.md) - Histórico de releases
 - [README.md](../README.md) - Documentação principal
-- [ROADMAP-V1.md](ROADMAP-V1.md) - Roadmap original (deprecated)
+- [ROADMAP-V1.md](archive/ROADMAP-V1.md) - Roadmap original (deprecated)
 
 ---
 

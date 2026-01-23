@@ -7,6 +7,8 @@ import uuid
 from datetime import datetime
 from typing import Any
 
+import pandas as pd
+import yfinance as yf
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
@@ -21,6 +23,46 @@ logger = logging.getLogger(__name__)
 
 # RAG instance (lazy loaded)
 _rag: SimpleRAG | None = None
+
+# Cache TTL para dados yfinance (5 minutos)
+YFINANCE_CACHE_TTL = 300
+
+
+async def get_cached_ohlc_data() -> list[dict]:
+    """Get OHLC data with caching.
+
+    Returns:
+        List of OHLC records
+    """
+    cache_key = f"chat:ohlc:{settings.symbol}:3mo"
+
+    # Tentar cache primeiro
+    cached = await get_cached(cache_key)
+    if cached:
+        logger.debug("Using cached OHLC data")
+        return cached
+
+    # Baixar dados frescos
+    logger.debug("Fetching fresh OHLC data from yfinance")
+    df = yf.download(settings.symbol, period="3mo", progress=False)
+
+    # Flatten multi-level columns if present
+    if hasattr(df.columns, 'levels'):
+        df.columns = [col[0] if isinstance(col, tuple) else col for col in df.columns]
+
+    # Filter out weekends (Saturday=5, Sunday=6)
+    df = df.reset_index()
+    df['Date'] = pd.to_datetime(df['Date'])
+    df = df[df['Date'].dt.dayofweek < 5]  # Keep only Mon-Fri
+
+    # Convert to JSON-serializable format
+    df['Date'] = df['Date'].astype(str)
+    ohlc_data = df.to_dict(orient="records")
+
+    # Salvar no cache
+    await set_cached(cache_key, ohlc_data, ttl=YFINANCE_CACHE_TTL)
+
+    return ohlc_data
 
 
 def get_rag() -> SimpleRAG:
@@ -58,7 +100,7 @@ async def get_news_context(query: str, top_k: int = 3) -> tuple[str, list[str]]:
         sources = []
 
         for r in results:
-            if r.similarity > 0.1:  # Lower threshold for Portuguese text
+            if r.similarity > settings.rag_min_similarity:
                 context_parts.append(f"- {r.content}")
                 if r.source not in sources:
                     sources.append(r.source)
@@ -134,6 +176,19 @@ def validate_code(code: str) -> tuple[bool, str]:
         r"__import__",
         r"\brequests\b",
         r"\burllib\b",
+        # Padrões adicionais de segurança
+        r"__builtins__",
+        r"\bglobals\s*\(",
+        r"\blocals\s*\(",
+        r"\bgetattr\s*\(",
+        r"\bsetattr\s*\(",
+        r"\bdelattr\s*\(",
+        r"\bimportlib\b",
+        r"\bcompile\s*\(",
+        r"\bbreakpoint\s*\(",
+        r"\b__class__\b",
+        r"\b__bases__\b",
+        r"\b__subclasses__\b",
     ]
 
     for pattern in dangerous_patterns:
@@ -326,6 +381,21 @@ async def generate_response_stream(
         return f"Erro ao gerar resposta: {str(e)}"
 
 
+def _is_valid_uuid(value: str) -> bool:
+    """Validate if string is a valid UUID."""
+    if not value:
+        return False
+    try:
+        uuid.UUID(value)
+        return True
+    except (ValueError, AttributeError, TypeError):
+        return False
+
+
+# Limite máximo de tamanho de mensagem (10KB)
+MAX_MESSAGE_SIZE = 10 * 1024
+
+
 @router.websocket("/ws/chat/{session_id}")
 async def chat_websocket(websocket: WebSocket, session_id: str | None = None):
     """WebSocket endpoint for chat with streaming.
@@ -338,6 +408,16 @@ async def chat_websocket(websocket: WebSocket, session_id: str | None = None):
     """
     await websocket.accept()
     logger.info(f"WebSocket connected: {session_id}")
+
+    # Validar session_id como UUID válido (se fornecido)
+    if session_id and session_id != "new" and not _is_valid_uuid(session_id):
+        logger.warning(f"Invalid session_id format: {session_id}")
+        await websocket.send_json({
+            "type": "error",
+            "message": "Invalid session_id format. Must be a valid UUID.",
+        })
+        await websocket.close(code=1008)  # Policy Violation
+        return
 
     # Create or get session
     if not session_id or session_id == "new":
@@ -373,6 +453,15 @@ async def chat_websocket(websocket: WebSocket, session_id: str | None = None):
             if not user_message:
                 continue
 
+            # Verificar tamanho da mensagem
+            if len(user_message) > MAX_MESSAGE_SIZE:
+                logger.warning(f"Message too large: {len(user_message)} bytes")
+                await websocket.send_json({
+                    "type": "error",
+                    "message": f"Mensagem muito grande. Máximo: {MAX_MESSAGE_SIZE} bytes.",
+                })
+                continue
+
             logger.debug(f"Chat message: {user_message[:100]}...")
 
             # Add user message to session
@@ -400,26 +489,8 @@ async def chat_websocket(websocket: WebSocket, session_id: str | None = None):
 
                 if is_valid:
                     try:
-                        # Get OHLC data for injection
-                        import yfinance as yf
-                        import pandas as pd
-                        df = yf.download(
-                            settings.symbol,
-                            period="3mo",
-                            progress=False,
-                        )
-                        # Flatten multi-level columns if present
-                        if hasattr(df.columns, 'levels'):
-                            df.columns = [col[0] if isinstance(col, tuple) else col for col in df.columns]
-
-                        # Filter out weekends (Saturday=5, Sunday=6)
-                        df = df.reset_index()
-                        df['Date'] = pd.to_datetime(df['Date'])
-                        df = df[df['Date'].dt.dayofweek < 5]  # Keep only Mon-Fri
-
-                        # Convert to JSON-serializable format
-                        df['Date'] = df['Date'].astype(str)
-                        ohlc_data = df.to_dict(orient="records")
+                        # Get OHLC data from cache
+                        ohlc_data = await get_cached_ohlc_data()
 
                         # Execute in sandbox
                         code_result = execute_analysis_code(
