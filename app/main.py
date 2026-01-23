@@ -47,7 +47,7 @@ app = FastAPI(
         "- `/api/v1/forex/usdbrl/technical` - Apenas análise técnica\n"
         "- `/health` - Status do serviço"
     ),
-    version="1.0.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
@@ -238,7 +238,7 @@ async def health_check():
 
     return {
         "status": "healthy",
-        "version": "1.0.0",
+        "version": "0.2.0",
         "cache": cache_status["redis"],
         "llm": llm_status,
         "sandbox": sandbox_status,

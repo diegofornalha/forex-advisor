@@ -53,6 +53,11 @@ class Settings(BaseSettings):
     chat_max_code_length: int = 5000  # max chars of code
     chat_allowed_imports: str = "pandas,numpy,json,math,statistics"  # whitelist
 
+    # RAG - Retrieval Augmented Generation
+    rag_db_path: str = "./data/rag.db"  # SQLite-vec database
+    rag_top_k: int = 3  # Number of results to retrieve
+    rag_min_similarity: float = 0.3  # Minimum similarity threshold
+
 
 @lru_cache
 def get_settings() -> Settings:

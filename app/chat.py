@@ -13,10 +13,64 @@ from pydantic import BaseModel
 from .cache import get_cached, set_cached
 from .config import settings
 from .llm_router import get_router
+from .rag_sdk import SimpleRAG
 from .recommendation import get_classification
 from .sandbox import execute_analysis_code
 
 logger = logging.getLogger(__name__)
+
+# RAG instance (lazy loaded)
+_rag: SimpleRAG | None = None
+
+
+def get_rag() -> SimpleRAG:
+    """Get RAG instance (singleton).
+
+    Returns:
+        SimpleRAG instance
+    """
+    global _rag
+    if _rag is None:
+        _rag = SimpleRAG(settings.rag_db_path)
+    return _rag
+
+
+async def get_news_context(query: str, top_k: int = 3) -> tuple[str, list[str]]:
+    """Search for relevant news context using RAG.
+
+    Args:
+        query: User message to find relevant context
+        top_k: Number of results to return
+
+    Returns:
+        Tuple of (context_text, list_of_sources)
+    """
+    try:
+        rag = get_rag()
+        results = await rag.search(query, top_k=top_k)
+        logger.info(f"RAG search for '{query[:50]}...' returned {len(results)} results")
+
+        if not results:
+            return "", []
+
+        # Build context and extract sources
+        context_parts = []
+        sources = []
+
+        for r in results:
+            if r.similarity > 0.1:  # Lower threshold for Portuguese text
+                context_parts.append(f"- {r.content}")
+                if r.source not in sources:
+                    sources.append(r.source)
+
+        context = "\n".join(context_parts)
+        return context, sources
+
+    except Exception as e:
+        import traceback
+        logger.error(f"RAG search failed: {e}")
+        logger.error(traceback.format_exc())
+        return "", []
 
 router = APIRouter(tags=["Chat"])
 
@@ -136,18 +190,20 @@ async def save_chat_session(session: ChatSession) -> None:
     )
 
 
-def build_system_prompt(classification: Any) -> str:
-    """Build system prompt with market context.
+def build_system_prompt(classification: Any, news_context: str = "") -> str:
+    """Build system prompt with market context and news.
 
     Args:
         classification: Current market classification
+        news_context: Optional news context from RAG
 
     Returns:
         System prompt string
     """
-    return f"""Você é um assistente especializado em análise de câmbio USD/BRL para usuários leigos.
+    # Base prompt with market data
+    prompt = f"""Você é um assistente especializado em análise de câmbio USD/BRL para usuários leigos.
 
-Contexto atual do mercado:
+CONTEXTO ATUAL DO MERCADO:
 - Classificação: {classification.classification.value}
 - Confiança: {classification.confidence:.1%}
 - Preço atual: R$ {classification.indicators.current_price:.4f}
@@ -158,18 +214,45 @@ Contexto atual do mercado:
 - Bollinger Inferior: R$ {classification.indicators.bollinger_lower:.4f}
 
 Explicação técnica: {classification.explanation}
+"""
 
+    # Add news context if available
+    if news_context:
+        prompt += f"""
+NOTÍCIAS RECENTES SOBRE CÂMBIO:
+{news_context}
+
+Use estas notícias para contextualizar suas respostas quando relevante.
+"""
+
+    # Instructions
+    prompt += f"""
 INSTRUÇÕES IMPORTANTES PARA SUAS RESPOSTAS:
 1. Use linguagem SIMPLES e acessível - o usuário é leigo em finanças
-2. NUNCA mencione termos técnicos como "DataFrame", "código", "Python", "script"
-3. Quando precisar fazer cálculos, apenas diga "Vou analisar os dados..." e gere o código silenciosamente
-4. Apresente os resultados de forma clara e amigável, com valores em Reais formatados
-5. Você NÃO deve dar recomendações de compra/venda - apenas análises educacionais
-6. Responda sempre em português brasileiro
+2. Apresente os resultados de forma clara e amigável, com valores em Reais formatados
+3. Você NÃO deve dar recomendações de compra/venda - apenas análises educacionais
+4. Responda sempre em português brasileiro
+5. Se usar informações das notícias, mencione a fonte
 
-Para cálculos, você tem acesso aos dados históricos em `df` com colunas: Date, Open, High, Low, Close, Volume.
-Imports permitidos: {settings.chat_allowed_imports}
+QUANDO O USUÁRIO PEDIR CÁLCULOS OU ANÁLISES:
+1. Diga brevemente "Vou analisar os dados..."
+2. SEMPRE gere código Python em um bloco ```python para executar a análise
+3. O código DEVE usar print() para mostrar os resultados
+4. IMPORTANTE: O DataFrame `df` contém dados REAIS e ATUALIZADOS do USD/BRL dos últimos 3 meses
+   - Colunas disponíveis: Date, Open, High, Low, Close, Volume
+   - NÃO simule dados - use df diretamente!
+5. Imports permitidos: {settings.chat_allowed_imports}
+
+EXEMPLO DE RESPOSTA COM CÓDIGO:
+Vou analisar os dados para calcular a média.
+
+```python
+import pandas as pd
+media = df['Close'].tail(10).mean()
+print(f"Média dos últimos 10 dias: R$ {{media:.4f}}")
+```
 """
+    return prompt
 
 
 async def generate_response_stream(
@@ -196,9 +279,14 @@ async def generate_response_stream(
         # Get current market context
         classification = await get_classification()
 
+        # Get news context from RAG (async, graceful fallback)
+        news_context, news_sources = await get_news_context(message, top_k=3)
+        if news_context:
+            logger.debug(f"RAG found {len(news_sources)} relevant sources")
+
         # Build messages with history
         messages = [
-            {"role": "system", "content": build_system_prompt(classification)},
+            {"role": "system", "content": build_system_prompt(classification, news_context)},
         ]
 
         # Add history (last N messages)
