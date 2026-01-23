@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from .cache import get_cached, get_cache_status, list_sessions
+from .cache import get_cached, get_cache_status, list_sessions, delete_session
 from .llm_router import get_router_stats
 
 logger = logging.getLogger(__name__)
@@ -76,6 +76,24 @@ async def get_session_detail(session_id: str) -> dict[str, Any]:
             "last_activity": data.get("last_activity"),
         }
     }
+
+
+@router.delete("/sessions/{session_id}")
+async def delete_session_endpoint(session_id: str) -> dict[str, Any]:
+    """Delete a chat session.
+
+    Args:
+        session_id: UUID of the session to delete
+
+    Returns:
+        Deletion status
+    """
+    result = await delete_session(session_id)
+
+    if not result["deleted"]:
+        return {"error": "Session not found", "session_id": session_id}
+
+    return result
 
 
 @router.get("/stats")

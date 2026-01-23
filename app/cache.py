@@ -255,3 +255,37 @@ async def list_sessions() -> list[dict[str, Any]]:
     sessions.sort(key=lambda x: x.get("last_activity") or "", reverse=True)
 
     return sessions
+
+
+async def delete_session(session_id: str) -> dict[str, Any]:
+    """Delete a chat session from cache.
+
+    Args:
+        session_id: UUID of the session to delete
+
+    Returns:
+        Dict with deletion status and details
+    """
+    # Try both session types
+    prefixes = ["chat:session:", "docs_chat:session:"]
+    deleted = False
+    session_type = None
+
+    for prefix in prefixes:
+        key = f"{prefix}{session_id}"
+
+        # Check if exists before deleting
+        exists = await get_cached(key) is not None
+
+        if exists:
+            await delete_cached(key)
+            deleted = True
+            session_type = "chat" if prefix.startswith("chat:") else "docs"
+            logger.info(f"Deleted session {session_id} (type: {session_type})")
+            break
+
+    return {
+        "deleted": deleted,
+        "session_id": session_id,
+        "type": session_type,
+    }
