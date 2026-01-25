@@ -107,8 +107,9 @@ Débitos técnicos são **inevitáveis** em qualquer projeto de software. O obje
 | ID | Débito | Severidade | Versão Target | Notas |
 |----|--------|------------|---------------|-------|
 | DT-B3 | Sem Prometheus | Médio | v1.0 | Observabilidade |
-| DT-B5 | News ingestion manual | Baixo | v1.x | Funciona manualmente |
-| DT-B6 | RAG cleanup manual | Baixo | v1.x | Funciona manualmente |
+| DT-B5 | News ingestion sem scheduler | Baixo | v1.x | CLI funciona: `python -m app.news_ingestion` |
+| DT-B6 | RAG cleanup sem scheduler | Baixo | v1.x | CLI funciona: `--clear` |
+| DT-B7 | SQLite-Vec para Milvus/Pinecone | Baixo | v2.x+ | Migrar quando escalar em volume |
 | DT-B8 | bollinger_middle não exposto | Baixo | v1.x | API funciona sem isso |
 
 ---
@@ -151,17 +152,20 @@ Débitos técnicos são **inevitáveis** em qualquer projeto de software. O obje
 Débitos Pendentes por Severidade:
 ├── CRÍTICO:  0 ✅
 ├── MÉDIO:    2 (Prometheus, E2E)
-└── BAIXO:    5 (transformações, indicador LLM, news, RAG, bollinger)
+└── BAIXO:    6 (transformações, indicador LLM, news scheduler, RAG scheduler, migração vetorial, bollinger)
 
-Total: 7 pendentes
+Total: 8 pendentes
+
+Nota: News e RAG têm CLI funcionando, só falta scheduler automático
 ```
 
 ### Débitos por Versão Target
 
-| Versão | Débitos | IDs |
-|--------|---------|-----|
-| v1.0 | 2 médios | DT-F4, DT-B3 |
-| v1.x | 5 baixos | DT-F3, DT-F5, DT-B5, DT-B6, DT-B8 |
+| Versão | Débitos | IDs | Notas |
+|--------|---------|-----|-------|
+| v1.0 | 2 médios | DT-F4, DT-B3 | Prometheus e E2E |
+| v1.x | 5 baixos | DT-F3, DT-F5, DT-B5, DT-B6, DT-B8 | B5/B6: CLI existe, falta scheduler |
+| v2.x+ | 1 baixo | DT-B7 | Migração para Milvus/Pinecone quando escalar |
 
 ### Status para v1.0
 
@@ -208,6 +212,7 @@ Os débitos pendentes são MÉDIOS ou BAIXOS e podem ser resolvidos em v1.1/v1.2
 |------|---------|
 | 2026-01-23 | Documento criado com política e matriz completa |
 | 2026-01-23 | Limpeza: removidos 13 débitos resolvidos, mantidos 7 pendentes |
+| 2026-01-23 | Adicionado DT-B7: migração SQLite-Vec → Milvus/Pinecone |
 
 ---
 

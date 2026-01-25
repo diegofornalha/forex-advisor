@@ -2,7 +2,7 @@
 
 > Mapa completo de tudo que está implementado e funcionando.
 
-**Versão Atual**: v0.4.1
+**Versão Atual**: v0.4.2
 **Última Atualização**: 2026-01-23
 **Status**: Pronto para avaliação de produção
 
@@ -87,6 +87,12 @@ O Forex Advisor é um assistente de análise de câmbio USD/BRL que combina:
 | `/ws/chat/{session_id}` | Chat streaming com execução de código | ✅ |
 | `/ws/docs/{session_id}` | Chat de documentação interativa | ✅ |
 
+### SSE (Server-Sent Events)
+
+| Endpoint | Descrição | Status |
+|----------|-----------|--------|
+| `/sse/docs/{request_id}` | Streaming de resposta do docs chat em tempo real | ✅ |
+
 ### Parâmetros de Query
 
 | Endpoint | Parâmetro | Descrição |
@@ -146,19 +152,113 @@ O Forex Advisor é um assistente de análise de câmbio USD/BRL que combina:
 | Connection Pool | Conexão persistente | ✅ |
 | WAL Mode | Melhor concorrência | ✅ |
 | Preload Model | Carrega no startup | ✅ |
+| News Ingestion | CLI para ingerir notícias do Google News RSS | ✅ |
+| News Automático | Scheduler para ingestion periódico | ⏳ v1.x |
+
+**⚠️ Onde o RAG é usado:**
+
+| Funcionalidade | Usa RAG? | Fonte de dados |
+|----------------|----------|----------------|
+| **Chat Principal** (`/ws/chat`) | ✅ Sim | Notícias ingeridas (Google News RSS) |
+| **Docs Chat** (`/ws/docs`) | ❌ Não | Arquivos .md direto no prompt |
+
+O RAG atualmente é usado **apenas para notícias** no chat principal de análise de mercado.
+O Docs Chat lê arquivos .md diretamente (context stuffing) - ver seção 4.5.
+
+**Banco Vetorial: SQLite-Vec**
+
+| Solução | Tipo | Complexidade | Custo | Melhor para |
+|---------|------|-------------|-------|-------------|
+| **SQLite-Vec** (atual) | Extensão SQLite | ⭐ Simples | Grátis | MVP, projetos pequenos |
+| Milvus | Banco vetorial dedicado | ⭐⭐⭐ Complexo | Grátis/Self-host | Escala média |
+| Pinecone | Cloud service | ⭐⭐ Moderado | $$$ Pago | Escala enterprise |
+
+**Por que SQLite-Vec para v0.x?**
+- ✅ **Leve**: Extensão do SQLite, não precisa serviço separado
+- ✅ **Simples**: Zero dependências externas, tudo em 1 arquivo
+- ✅ **MVP**: Ideal para validar a POC sem over-engineering
+- ✅ **Integrado**: Roda no mesmo processo do FastAPI
+
+**Migração futura (v1.x+):**
+- Quando escalar em volume de dados ou usuários
+- Avaliar custo-benefício vs. complexidade
+- Opções: Milvus (self-host) ou Pinecone (cloud)
+
+**CLI de News Ingestion:**
+```bash
+python -m app.news_ingestion              # Ingesta notícias (Google News RSS)
+python -m app.news_ingestion --stats      # Mostra estatísticas do RAG
+python -m app.news_ingestion --search "dólar"  # Testa busca semântica
+python -m app.news_ingestion --clear      # Limpa todos os dados
+```
 
 ### 4.5 Docs Chat (Documentação Interativa)
 
 | Feature | Descrição | Status |
 |---------|-----------|--------|
-| WebSocket Streaming | Resposta em tempo real | ✅ |
+| Hybrid Streaming (WebSocket + SSE) | WebSocket para envio, SSE para recebimento em tempo real | ✅ |
 | Knowledge Base | Docs .md como contexto no system prompt | ✅ |
 | Guardrails Anti-Alucinação | Validação de respostas antes de enviar | ✅ |
 | Detecção de Padrões | Regex para ofertas de criar, cloud providers | ✅ |
 | Fallback Response | Mensagem padrão se info não documentada | ✅ |
 | Sessões Persistentes | Redis + memory fallback | ✅ |
-| Sugestões Pré-definidas | 5 perguntas comuns para começar | ✅ |
+| Sugestões Pré-definidas | Perguntas comuns para começar | ✅ |
 | Indicador de Conexão | Status visual do WebSocket | ✅ |
+
+**⚠️ Importante: Docs Chat NÃO usa RAG**
+
+O Docs Chat usa **context stuffing** (arquivos .md direto no system prompt), não RAG:
+
+```
+docs/*.md → load_documentation() → System Prompt → LLM
+```
+
+| Aspecto | Docs Chat | Chat Principal |
+|---------|-----------|----------------|
+| **Usa RAG?** | ❌ Não | ✅ Sim |
+| **Como funciona** | Lê .md e coloca no prompt | Busca semântica no RAG |
+| **Escalabilidade** | Limitado (tokens) | Escala bem |
+| **Atualização** | Automática (lê arquivos) | Precisa re-ingerir |
+
+**Por que não usa RAG?**
+- **POC/Desenvolvimento**: Docs mudam frequentemente, context stuffing é mais prático
+- **Tamanho atual**: Docs cabem no limite de tokens do LLM
+- **Simplicidade**: Não precisa re-ingerir a cada mudança de documentação
+
+**Evolução futura (v2.0+)**:
+- Quando documentação estiver consolidada e estável
+- Migrar para RAG híbrido (docs críticos no prompt + RAG para o resto)
+- Permite escalar para documentação maior
+
+**Arquitetura de Streaming SSE Híbrido:**
+
+```
+┌─────────────────┐     WebSocket      ┌─────────────────┐
+│    Frontend     │ ──────────────────▶│     Backend     │
+│  (useDocsChat)  │   envio mensagem   │  (docs_chat.py) │
+│                 │                     │                 │
+│                 │◀────────────────── │                 │
+│                 │   stream_url       │                 │
+│                 │                     │                 │
+│                 │        SSE         │                 │
+│   EventSource   │◀═══════════════════│ /sse/docs/{id}  │
+│                 │   chunks em tempo  │                 │
+│                 │       real         │                 │
+└─────────────────┘                     └─────────────────┘
+```
+
+**Fluxo:**
+1. Cliente envia mensagem via WebSocket
+2. Backend gera `request_id` único e envia `stream_url` via WebSocket
+3. Cliente conecta ao endpoint SSE `/sse/docs/{request_id}`
+4. Backend aguarda conexão SSE antes de iniciar geração LLM
+5. Chunks são enviados em tempo real via SSE
+6. Evento `done` finaliza o streaming com validação de guardrails
+
+**Arquivos envolvidos:**
+- Backend: `app/docs_chat.py` - endpoint SSE, geração streaming
+- Frontend: `src/hooks/useDocsChat.ts` - EventSource, acúmulo de chunks
+- Frontend: `src/components/chat/ChatMessage.tsx` - renderização progressiva
 
 **Guardrails implementados:**
 - Bloqueia ofertas de criar documentação
@@ -237,18 +337,21 @@ Ver `.env.example` para lista completa.
 
 ---
 
-## 8. O que NÃO está implementado
+## 8. O que NÃO está implementado (ou parcialmente)
 
-| Feature | Versão Planejada | Motivo |
-|---------|------------------|--------|
-| Prometheus | v1.0 | Débito médio |
-| Testes E2E | v1.0 | Débito médio |
-| CI/CD | v1.0 | Débito médio |
-| News ingestion automático | v1.0 | Débito baixo |
-| Multi-asset (EUR, BTC) | v2.0 | Feature futura |
-| Backtesting | v2.0 | Feature futura |
-| Alertas | v2.0 | Feature futura |
-| Agent Mode | v3.0 | Feature futura |
+| Feature | Status Atual | Versão Planejada | Notas |
+|---------|--------------|------------------|-------|
+| Prometheus | ❌ Não existe | v1.0 | Débito médio |
+| Testes E2E | ❌ Não existe | v1.0 | Débito médio |
+| CI/CD | ❌ Não existe | v1.0 | Débito médio |
+| News Scheduler | ⏳ CLI existe, falta automação | v1.x | `python -m app.news_ingestion` funciona |
+| RAG Cleanup | ⏳ CLI existe, falta automação | v1.x | `--clear` funciona manual |
+| Docs Chat via RAG | ⏳ Usa context stuffing | v2.0 | Migrar quando docs estiverem consolidados |
+| SQLite-Vec Migration | ⏳ Leve, simples, funcional | v2.x+ | Migrar para Milvus/Pinecone quando escalar |
+| Multi-asset (EUR, BTC) | ❌ Não existe | v2.0 | Feature futura |
+| Backtesting | ❌ Não existe | v2.0 | Feature futura |
+| Alertas | ❌ Não existe | v2.0 | Feature futura |
+| Agent Mode | ❌ Não existe | v3.0 | Feature futura |
 
 ---
 
@@ -325,6 +428,8 @@ forex-advisor/
 | 2026-01-23 | v0.3 | Frontend cleanup, localStorage |
 | 2026-01-23 | v0.4 | Fallback chain, circuit breaker, 79 testes |
 | 2026-01-23 | v0.4.1 | Docs Chat com guardrails anti-alucinação |
+| 2026-01-23 | v0.4.2 | SSE Hybrid Streaming para Docs Chat em tempo real |
+| 2026-01-23 | v0.4.2 | Documentação: RAG vs Docs Chat, escolha SQLite-Vec, migração futura |
 
 ---
 
