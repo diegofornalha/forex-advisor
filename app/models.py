@@ -27,6 +27,10 @@ class TechnicalIndicators:
     bollinger_upper: float
     bollinger_lower: float
     bollinger_middle: float
+    stochastic_k: float
+    stochastic_d: float
+    macd: float
+    macd_signal: float
 
 
 @dataclass
@@ -73,6 +77,10 @@ class IndicatorsResponse(BaseModel):
     rsi: float = Field(..., description="Índice de Força Relativa (14 períodos)")
     bollinger_upper: float = Field(..., description="Banda de Bollinger superior")
     bollinger_lower: float = Field(..., description="Banda de Bollinger inferior")
+    stochastic_k: float = Field(..., description="Stochastic %K (14 períodos)")
+    stochastic_d: float = Field(..., description="Stochastic %D (média móvel de %K)")
+    macd: float = Field(..., description="MACD (12, 26, 9)")
+    macd_signal: float = Field(..., description="MACD Signal Line")
 
 
 class InsightResponse(BaseModel):

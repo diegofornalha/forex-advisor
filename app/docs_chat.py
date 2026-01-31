@@ -417,10 +417,17 @@ async def generate_docs_response_streaming(
     message: str,
     session: DocsSession,
 ) -> None:
-    """Generate response for docs chat with real-time streaming via SSE.
+    """🚀 ATIVAÇÃO DO LLM - Fluxo Completo
 
-    Streams chunks to the SSE queue in real-time.
-    Applies guardrails at the end and sends sanitized flag.
+    LLM é ativado APENAS quando usuário envia mensagem via WebSocket!
+
+    Fluxo detalhado:
+    1. WebSocket recebe mensagem (docs_chat_websocket:700)
+    2. request_id gerado (docs_chat_websocket:725)
+    3. ⚡ LLM ATIVADO AQUI (linha 478-485):
+       llm_router.acompletion(stream=True) → MINIMAX CHAMADO!
+    4. Chunks streaming em tempo real via SSE
+    5. Frontend recebe chunks e renderiza
 
     Args:
         request_id: Unique ID for this request
@@ -437,9 +444,9 @@ async def generate_docs_response_streaming(
     if connected_event:
         try:
             await asyncio.wait_for(connected_event.wait(), timeout=10.0)
-            logger.info(f"SSE client ready, starting generation for request_id: {request_id}")
+            logger.info(f"✅ SSE client ready, starting LLM for request_id: {request_id}")
         except asyncio.TimeoutError:
-            logger.warning(f"SSE client did not connect in time for request_id: {request_id}")
+            logger.warning(f"⚠️ SSE client did not connect in time for request_id: {request_id}")
             await queue.put({"type": "error", "message": "Cliente SSE não conectou a tempo."})
             await queue.put({"type": "done"})
             return
@@ -447,6 +454,7 @@ async def generate_docs_response_streaming(
     llm_router = get_router()
 
     if llm_router is None:
+        logger.error("❌ LLM router not configured")
         await queue.put({"type": "error", "message": "LLM não configurado."})
         await queue.put({"type": "done"})
         return
@@ -470,29 +478,40 @@ async def generate_docs_response_streaming(
 
         # Log context size for debugging
         total_chars = sum(len(m.get("content", "")) for m in messages)
-        logger.info(f"Docs chat SSE: {len(messages)} messages, {total_chars} total chars")
+        logger.info(f"📝 Docs chat SSE: {len(messages)} messages, {total_chars} total chars")
 
-        # Generate response with streaming
+        # ============================================================
+        # 🚀 LLM ACTIVATION POINT - HERE THE MAGIC HAPPENS!
+        # ============================================================
+        logger.info("⚡ ACTIVATING LLM (Minimax) - Streaming mode ON")
         full_response = ""
         try:
+            # ⚡⚡⚡ LLM ACORDA AQUI! ⚡⚡⚡
             response = await asyncio.wait_for(
-                llm_router.acompletion(
+                llm_router.acompletion(  # ← MINIMAX IS CALLED!
                     messages=messages,
                     max_tokens=settings.llm_max_tokens,
-                    stream=True,  # Real streaming!
+                    stream=True,  # ← Real streaming!
                 ),
                 timeout=60.0,
             )
 
+            logger.info("✅ LLM response stream started - receiving chunks...")
+
             # Stream chunks in real-time
+            chunks_count = 0
             async for chunk in response:
                 if chunk.choices and chunk.choices[0].delta.content:
                     content = chunk.choices[0].delta.content
                     full_response += content
+                    chunks_count += 1
+                    logger.debug(f"📦 Chunk #{chunks_count}: {len(content)} chars")
                     await queue.put({"type": "chunk", "content": content})
 
+            logger.info(f"✅ LLM stream complete: {chunks_count} chunks, {len(full_response)} total chars")
+
         except asyncio.TimeoutError:
-            logger.error("Docs chat SSE: LLM timeout after 60 seconds")
+            logger.error("❌ LLM timeout after 60 seconds")
             await queue.put({
                 "type": "error",
                 "message": "Resposta demorou muito. Tente novamente.",
@@ -500,15 +519,13 @@ async def generate_docs_response_streaming(
             await queue.put({"type": "done"})
             return
 
-        logger.info(f"Docs chat SSE: LLM response complete, {len(full_response)} chars")
-
         # Apply guardrails at the end
         sanitized_response = sanitize_response(full_response)
         was_sanitized = sanitized_response != full_response
 
         if was_sanitized:
             logger.info(
-                f"SSE Guardrail activated: original={len(full_response)} chars, "
+                f"🛡️ Guardrail activated: original={len(full_response)} chars, "
                 f"sanitized={len(sanitized_response)} chars"
             )
 
@@ -517,6 +534,7 @@ async def generate_docs_response_streaming(
         _pending_requests[request_id]["was_sanitized"] = was_sanitized
 
         # Send done with sanitization info
+        logger.info(f"📤 Sending done to frontend - Response ready!")
         await queue.put({
             "type": "done",
             "sanitized": was_sanitized,
@@ -524,7 +542,7 @@ async def generate_docs_response_streaming(
         })
 
     except Exception as e:
-        logger.error(f"Error in SSE streaming: {e}")
+        logger.error(f"❌ Error in SSE streaming: {e}")
         await queue.put({"type": "error", "message": str(e)})
         await queue.put({"type": "done"})
 

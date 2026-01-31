@@ -5,9 +5,13 @@ import time
 from collections import defaultdict
 from contextlib import asynccontextmanager
 
+import os
+from pathlib import Path
+
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from .admin import router as admin_router, set_rag_instance
@@ -177,27 +181,59 @@ async def get_usdbrl_insight(
         description="Forçar atualização, ignorando cache",
     ),
 ):
-    """Return complete USD/BRL analysis with AI-generated insight."""
+    """🚀 ENDPOINT /api/v1/forex/usdbrl - Dashboard Insights
+
+    Pipeline completo:
+    1. Verificar cache (TTL: 1 hora)
+    2. Análise técnica (SEM LLM)
+    3. Gerar insight (⚡ COM LLM!) → MINIMAX
+    4. Montar resposta
+    5. Salvar no cache
+
+    Quando é chamado:
+    - Momento: Carregamento da página /insights
+    - Frequência: 1x por hora (cache)
+    - Custo: $XX (geração de insight)
+
+    Returns:
+        Resposta JSON com dados técnicos + insight gerado por IA
+    """
     cache_key = "forex:usdbrl:latest"
 
-    # Try cache first (unless force_refresh)
+    logger.info(f"🚀 [API] GET /api/v1/forex/usdbrl - force_refresh={force_refresh}")
+
+    # 1. Tentar cache primeiro (a menos que force_refresh)
     if not force_refresh:
+        logger.info("💾 [API] Checking cache...")
         cached = await get_cached(cache_key)
         if cached:
+            logger.info("✅ [API] Cache HIT - Returning cached insight")
             cached["cached"] = True
             return JSONResponse(
                 content=cached,
                 headers={"X-Cache": "HIT"},
             )
+        logger.info("💾 [API] Cache MISS - Will generate new insight")
 
     try:
-        # 1. Get technical classification
+        # 2. ⚡ ANÁLISE TÉCNICA (SEM LLM)
+        logger.info("📊 [API] Step 1: Getting technical classification (NO LLM)...")
         classification = await get_classification()
+        logger.info(
+            f"📊 [API] Technical analysis: {classification.classification.value} "
+            f"(confidence: {classification.confidence:.0%})"
+        )
 
-        # 2. Generate insight with news context
+        # 3. 🚀 GERAR INSIGHT (⚡ COM LLM!)
+        logger.info("🚀 [API] Step 2: Generating insight with LLM...")
+        logger.info("⚡⚡⚡ LLM ACTIVATION: generate_insight() → call_llm()")
         insight = await generate_insight(classification)
+        logger.info(
+            f"✅ [API] Insight generated: {len(insight.text)} chars "
+            f"from {len(insight.news_sources)} sources"
+        )
 
-        # 3. Build response
+        # 4. Montar resposta
         result = {
             "symbol": "USD/BRL",
             "classification": classification.classification.value,
@@ -218,7 +254,8 @@ async def get_usdbrl_insight(
             "cached": False,
         }
 
-        # 4. Save to cache
+        # 5. Salvar no cache
+        logger.info(f"💾 [API] Saving to cache (TTL: {settings.cache_ttl_insight}s)...")
         await set_cached(cache_key, result, ttl=settings.cache_ttl_insight)
 
         return JSONResponse(
@@ -345,15 +382,51 @@ async def llm_metrics():
     return get_router_stats()
 
 
-@app.get("/", include_in_schema=False)
-async def root():
-    """Redirect root to docs."""
-    return {
-        "message": "Forex Advisor API - Remessa Online",
-        "docs": "/docs",
-        "health": "/health",
-        "endpoints": {
-            "full_analysis": "/api/v1/forex/usdbrl",
-            "technical_only": "/api/v1/forex/usdbrl/technical",
-        },
-    }
+# Static files for frontend SPA
+# Path to frontend dist folder
+FRONTEND_DIR = Path("/home/agents/prototipo/dist")
+FRONTEND_ASSETS = FRONTEND_DIR / "assets"
+
+if FRONTEND_DIR.exists():
+    # Mount assets folder
+    if FRONTEND_ASSETS.exists():
+        app.mount("/assets", StaticFiles(directory=str(FRONTEND_ASSETS)), name="assets")
+
+    @app.get("/", include_in_schema=False)
+    async def serve_spa():
+        """Serve SPA index.html."""
+        index_file = FRONTEND_DIR / "index.html"
+        if index_file.exists():
+            return FileResponse(str(index_file))
+        return {"error": "Frontend not found"}
+
+    @app.get("/{path:path}", include_in_schema=False)
+    async def serve_spa_routes(path: str):
+        """Serve SPA for all non-API routes (client-side routing)."""
+        # Don't serve SPA for API, ws, sse routes
+        if path.startswith(("api/", "ws/", "sse/", "docs", "openapi.json", "health", "metrics")):
+            raise HTTPException(status_code=404, detail="Not found")
+
+        # Check if it's a static file
+        static_file = FRONTEND_DIR / path
+        if static_file.exists() and static_file.is_file():
+            return FileResponse(str(static_file))
+
+        # Otherwise serve index.html for SPA routing
+        index_file = FRONTEND_DIR / "index.html"
+        if index_file.exists():
+            return FileResponse(str(index_file))
+        raise HTTPException(status_code=404, detail="Not found")
+else:
+    @app.get("/", include_in_schema=False)
+    async def root():
+        """API root when frontend is not available."""
+        return {
+            "message": "Forex Advisor API - Remessa Online",
+            "docs": "/docs",
+            "health": "/health",
+            "endpoints": {
+                "full_analysis": "/api/v1/forex/usdbrl",
+                "technical_only": "/api/v1/forex/usdbrl/technical",
+            },
+        }

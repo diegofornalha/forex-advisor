@@ -6,26 +6,36 @@ import time
 from datetime import datetime
 from typing import Any
 
-import redis.asyncio as redis
-
 from .config import settings
 
 logger = logging.getLogger(__name__)
 
+# Try to import redis, fallback to None if not available
+try:
+    import redis.asyncio as redis
+    REDIS_AVAILABLE = True
+except ImportError:
+    redis = None
+    REDIS_AVAILABLE = False
+    logger.warning("Redis not available. Using memory cache only.")
+
 # Global Redis client (singleton)
-_redis_client: redis.Redis | None = None
+_redis_client: Any = None
 
 # In-memory cache as fallback
 _memory_cache: dict[str, tuple[dict, float]] = {}
 
 
-async def get_redis() -> redis.Redis | None:
+async def get_redis() -> Any | None:
     """Return Redis client (singleton pattern).
 
     Returns:
         Redis client or None if connection fails
     """
     global _redis_client
+
+    if not REDIS_AVAILABLE:
+        return None
 
     if _redis_client is None:
         try:

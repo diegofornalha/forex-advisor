@@ -46,7 +46,7 @@ def calculate_indicators(df: pd.DataFrame) -> TechnicalIndicators:
     Returns:
         TechnicalIndicators with all calculated values
     """
-    close = df["Close"].squeeze()
+    close = df["Close"].squeeze().reset_index(drop=True)
 
     # Current price (last close)
     current_price = float(close.iloc[-1])
@@ -81,6 +81,28 @@ def calculate_indicators(df: pd.DataFrame) -> TechnicalIndicators:
     bb_upper = bb_middle + (2 * bb_std)
     bb_lower = bb_middle - (2 * bb_std)
 
+    # Stochastic Oscillator (14, 3, 3)
+    low = df["Low"].squeeze().reset_index(drop=True)
+    high = df["High"].squeeze().reset_index(drop=True)
+    low_14 = low.rolling(window=14).min()
+    high_14 = high.rolling(window=14).max()
+    denominator = high_14 - low_14
+    k_percent = 100 * ((close - low_14) / denominator.replace(0, np.nan))
+    stochastic_k_raw = k_percent.iloc[-1]
+    stochastic_k = float(stochastic_k_raw) if pd.notna(stochastic_k_raw) else 50.0
+    stochastic_d_raw = k_percent.rolling(window=3).mean().iloc[-1]
+    stochastic_d = float(stochastic_d_raw) if pd.notna(stochastic_d_raw) else 50.0
+
+    # MACD (12, 26, 9)
+    ema_12 = close.ewm(span=12).mean()
+    ema_26 = close.ewm(span=26).mean()
+    macd_line = ema_12 - ema_26
+    macd_signal_line = macd_line.ewm(span=9).mean()
+    macd_raw = macd_line.iloc[-1]
+    macd = float(macd_raw) if pd.notna(macd_raw) else 0.0
+    macd_signal_raw = macd_signal_line.iloc[-1]
+    macd_signal = float(macd_signal_raw) if pd.notna(macd_signal_raw) else 0.0
+
     return TechnicalIndicators(
         current_price=round(current_price, 4),
         sma20=round(sma20, 4),
@@ -89,6 +111,10 @@ def calculate_indicators(df: pd.DataFrame) -> TechnicalIndicators:
         bollinger_upper=round(bb_upper, 4),
         bollinger_lower=round(bb_lower, 4),
         bollinger_middle=round(bb_middle, 4),
+        stochastic_k=round(stochastic_k, 2),
+        stochastic_d=round(stochastic_d, 2),
+        macd=round(macd, 4),
+        macd_signal=round(macd_signal, 4),
     )
 
 

@@ -1,4 +1,30 @@
-"""Insight generator with news context and LLM (via LiteLLM Router)."""
+"""🚀 INSIGHTS GENERATOR - Dashboard Híbrido (Dados + IA + Chat)
+
+/insights é um dashboard completo que combina:
+1. Dados técnicos (SEM LLM) - Indicadores, classificação
+2. Insight gerado por IA (COM LLM) - Texto contextualizado
+3. Chat interativo (COM LLM) - Perguntas do usuário
+
+⚡ ATIVAÇÃO DO LLM:
+- Momento 1: Carregamento inicial → generate_insight() → call_llm()
+- Momento 2: Chat do usuário → chat_websocket() → call_llm()
+
+FLUXO COMPLETO:
+/insights
+  ├── HTTP GET /api/v1/forex/usdbrl
+  │   ├── get_classification() (SEM LLM)
+  │   ├── generate_insight() (COM LLM!) → MINIMAX
+  │   └── Cache (1h)
+  │
+  └── WebSocket /ws/chat/{session_id}
+      ├── search_news_context() (RAG)
+      └── call_llm() (COM LLM!) → MINIMAX
+
+CUSTOS:
+- Carregamento inicial: $XX (insight gerado)
+- Chat: $XX por mensagem
+- Indicadores técnicos: $0 (só matemática)
+"""
 
 import logging
 from datetime import datetime
@@ -143,30 +169,44 @@ async def generate_insight(
     classification: ClassificationResult,
     news: list[NewsItem] | None = None,
 ) -> InsightResult:
-    """Generate contextualized insight using LLM Router.
+    """🚀 GERAÇÃO DE INSIGHT COM LLM - Momento 1 de Ativação
 
-    Pipeline:
-    1. Fetch news if not provided
-    2. Build prompt with technical classification + news context
-    3. Call LLM via Router (with automatic fallback)
-    4. Validate compliance (no investment recommendations)
-    5. Regenerate if validation fails
+    ⚡⚡⚡ ESTA FUNÇÃO ATIVA O LLM! ⚡⚡⚡
+
+    Pipeline completo:
+    1. Buscar notícias (RAG)
+    2. Construir prompt com classificação técnica + contexto
+    3. ⚡ CHAMAR LLM via Router → MINIMAX ATIVADO!
+    4. Validar compliance (sem recomendações)
+    5. Regenerar se falhar
+
+    Quando é chamada:
+    - Momento: Carregamento inicial da página /insights
+    - Frequência: 1x por hora (cache)
+    - Custo: $XX tokens (insight gerado)
 
     Args:
-        classification: Technical analysis classification result
-        news: List of news items (fetched automatically if not provided)
+        classification: Resultado da análise técnica
+        news: Lista de notícias (buscada automaticamente se None)
 
     Returns:
-        InsightResult with generated text and metadata
+        InsightResult com texto gerado por IA + metadados
     """
-    # Fetch news if not provided
+    logger.info("🚀 [INSIGHT] Starting insight generation with LLM...")
+
+    # 1. Buscar notícias se não fornecidas
     if news is None:
+        logger.info("📰 [INSIGHT] Fetching news for context...")
         news = await fetch_news()
+        logger.info(f"📰 [INSIGHT] Fetched {len(news)} news items")
+    else:
+        logger.info(f"📰 [INSIGHT] Using provided news: {len(news)} items")
 
-    # Build news context for prompt
+    # 2. Construir contexto de notícias
     news_context = build_news_context(news)
+    logger.info("📰 [INSIGHT] News context built for prompt")
 
-    # Build full prompt
+    # 3. Construir prompt completo
     prompt = INSIGHT_PROMPT.format(
         classification=classification.classification.value,
         confidence=classification.confidence,
@@ -180,16 +220,22 @@ async def generate_insight(
         news_context=news_context,
     )
 
-    # Call LLM via Router (automatic fallback, health checks, retries)
+    logger.info(f"📝 [INSIGHT] Prompt built: {len(prompt)} chars")
+
+    # 4. ⚡⚡⚡ CHAMAR LLM - PONTO CRÍTICO! ⚡⚡⚡
+    logger.info("⚡⚡⚡ ACTIVATING LLM (Minimax) for insight generation...")
     try:
+        logger.info("💰 [INSIGHT] LLM COST: Starting token consumption...")
         insight_text = await call_llm(
             messages=[{"role": "user", "content": prompt}]
         )
+        logger.info(f"💰 [INSIGHT] LLM COST: Insight generated ({len(insight_text)} chars)")
+        logger.info("✅ [INSIGHT] LLM response received successfully")
 
-        # Validate compliance
+        # 5. Validar compliance
         if not validate_insight(insight_text):
-            # Regenerate with stronger instruction if failed
-            logger.warning("Insight failed validation, regenerating...")
+            logger.warning("⚠️ [INSIGHT] Insight failed compliance validation - regenerating...")
+            logger.info("🔄 [INSIGHT] Calling LLM again with stronger compliance prompt...")
             insight_text = await call_llm(
                 messages=[
                     {"role": "user", "content": prompt},
@@ -204,9 +250,15 @@ async def generate_insight(
                     },
                 ]
             )
+            logger.info("✅ [INSIGHT] Regenerated insight passed validation")
 
-        # Extract unique news sources
+        # Extrair fontes únicas
         news_sources = list({item.source for item in news[:5]})
+
+        logger.info(
+            f"✅ [INSIGHT] Insight generated successfully - "
+            f"{len(insight_text)} chars, {len(news_sources)} sources"
+        )
 
         return InsightResult(
             text=insight_text,
@@ -216,8 +268,10 @@ async def generate_insight(
         )
 
     except Exception as e:
-        logger.error(f"Error generating insight: {e}")
-        # Fallback: basic insight without LLM
+        logger.error(f"❌ [INSIGHT] Error generating insight: {e}")
+        logger.warning("🔄 [INSIGHT] Using fallback insight (no LLM)")
+
+        # Fallback: insight básico sem LLM
         return InsightResult(
             text=(
                 f"O par USD/BRL apresenta {classification.classification.value.lower()}. "
